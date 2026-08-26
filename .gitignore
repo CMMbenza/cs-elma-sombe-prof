@@ -1,0 +1,17 @@
+# Fichiers de configuration sensibles
+.env
+.env.local
+.env.production
+
+# Journaux et logs
+*.log
+logs/
+
+# Fichiers temporaires et OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Dossier IDE / Editeurs
+.vscode/
+.idea/
