@@ -14,7 +14,6 @@ if (!function_exists('e')) {
     }
 }
 
-// Extraction de la Catégorie et Sous-catégorie (ex: "FRANCAIS (GRAMMAIRE)")
 function separerCoursEtBranche(string $intitule): array {
     if (preg_match('/^(.*?)\s*\((.*?)\)$/', trim($intitule), $matches)) {
         return [
@@ -28,14 +27,9 @@ function separerCoursEtBranche(string $intitule): array {
     ];
 }
 
-// Calcul dynamique de l'année scolaire en cours (ex: 2026-2027)
 $currentMonth = (int)date('n');
 $currentYear  = (int)date('Y');
-if ($currentMonth >= 8) {
-    $anneeEnCours = $currentYear . '-' . ($currentYear + 1);
-} else {
-    $anneeEnCours = ($currentYear - 1) . '-' . $currentYear;
-}
+$anneeEnCours = ($currentMonth >= 8) ? $currentYear . '-' . ($currentYear + 1) : ($currentYear - 1) . '-' . $currentYear;
 
 $error   = '';
 $success = '';
@@ -45,7 +39,7 @@ $enseignantId = (int)($prof['id'] ?? 0);
 $classeId     = get_current_classe(); 
 $previsionId  = (int)($_GET['id'] ?? 0);
 
-// --- 1. CRÉATION / OUVERTURE DE LA FICHE VIA MODAL + REDIRECTION ANGLAIS ---
+// --- 1. CRÉATION / OUVERTURE D'UNE FICHE SPÉCIFIQUE ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create_head'])) {
     $coursId       = (int)($_POST['cours_id'] ?? 0);
     $anneeScolaire = trim($_POST['anneeScolaire'] ?? '');
@@ -54,7 +48,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create_head'])
         $error = "Veuillez sélectionner un cours et préciser l'année scolaire.";
     } else {
         try {
-            // Récupération de l'intitulé du cours pour détecter l'Anglais
             $stmtC = $con->prepare("SELECT intitule FROM cours WHERE id = ?");
             $stmtC->bind_param("i", $coursId);
             $stmtC->execute();
@@ -75,7 +68,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create_head'])
                 $previsionId = (int)$con->insert_id;
             }
 
-            // REDIRECTION INTELLIGENTE SELON LA MATIÈRE
             if (strpos($intituleCours, 'ANGLAIS') !== false || strpos($intituleCours, 'ENGLISH') !== false) {
                 header("Location: fiche_des_prevision_anglais.php?id=" . $previsionId);
             } else {
@@ -89,18 +81,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create_head'])
     }
 }
 
-// --- 2. AJOUT D'UNE LEÇON AVEC CODE INCRÉMENTAL AUTOMATIQUE ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_lecon']) && $previsionId > 0) {
-    $periode           = trim($_POST['periode'] ?? '');
+// --- 2. AJOUT D'UNE LEÇON DE PRÉVISION ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_lecon'])) {
+    $targetPrevisionId = (int)($_POST['target_prevision_id'] ?? $previsionId);
+    $periode           = trim($_POST['periode'] ?? '1ÈRE PERIODE');
     $mois              = trim($_POST['mois'] ?? '');
     $semaine           = trim($_POST['semaine_libelle'] ?? '');
     $savoirsEssentiels = trim($_POST['savoirs_essentiels'] ?? '');
+    $activites         = trim($_POST['activites'] ?? '');
     $code              = trim($_POST['code'] ?? '');
-    $dateExecution     = !empty($_POST['date_execution']) ? $_POST['date_execution'] : null;
     $observation       = trim($_POST['observation'] ?? '');
 
-    if (empty($periode) || empty($mois) || empty($semaine) || empty($savoirsEssentiels)) {
-        $error = "Veuillez remplir les champs obligatoires (*).";
+    if ($targetPrevisionId <= 0 || empty($mois) || empty($semaine) || empty($savoirsEssentiels)) {
+        $error = "Veuillez remplir tous les champs obligatoires (*).";
     } else {
         try {
             if (empty($code)) {
@@ -109,8 +102,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_lecon']) &
                     $pNum = (int)$mP[1];
                 }
 
-                $stmtCount = $con->prepare("SELECT COUNT(*) AS total FROM prevision_detail WHERE prevision_id = ? AND periode = ?");
-                $stmtCount->bind_param("is", $previsionId, $periode);
+                $stmtCount = $con->prepare("SELECT COUNT(*) AS total FROM prevision_detail WHERE prevision_id = ?");
+                $stmtCount->bind_param("i", $targetPrevisionId);
                 $stmtCount->execute();
                 $resCount = $stmtCount->get_result()->fetch_assoc();
                 $nextIndex = ((int)($resCount['total'] ?? 0)) + 1;
@@ -119,41 +112,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_lecon']) &
             }
 
             $stmt = $con->prepare("
-                INSERT INTO prevision_detail (prevision_id, periode, mois, semaine_libelle, savoirs_essentiels, code, observation)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO prevision_detail (prevision_id, periode, mois, semaine_libelle, savoirs_essentiels, code, observation, activites)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ");
-            $stmt->bind_param("issssss", $previsionId, $periode, $mois, $semaine, $savoirsEssentiels, $code, $observation);
+            $stmt->bind_param("isssssss", $targetPrevisionId, $periode, $mois, $semaine, $savoirsEssentiels, $code, $observation, $activites);
             $stmt->execute();
-            $success = "Leçon enregistrée avec le code " . e($code) . " !";
+            $success = "Prévision enregistrée avec le code " . e($code) . " !";
         } catch (Throwable $e) {
             $error = "Erreur d'enregistrement : " . $e->getMessage();
         }
     }
 }
 
-// --- 3. SUPPRESSION D'UNE LIGNE ---
-if (isset($_GET['delete_line']) && $previsionId > 0) {
+// --- 3. MODIFICATION D'UNE LEÇON DE PRÉVISION ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_edit_lecon'])) {
+    $lineId            = (int)($_POST['line_id'] ?? 0);
+    $periode           = trim($_POST['periode'] ?? '');
+    $mois              = trim($_POST['mois'] ?? '');
+    $semaine           = trim($_POST['semaine_libelle'] ?? '');
+    $savoirsEssentiels = trim($_POST['savoirs_essentiels'] ?? '');
+    $activites         = trim($_POST['activites'] ?? '');
+    $code              = trim($_POST['code'] ?? '');
+    $observation       = trim($_POST['observation'] ?? '');
+
+    if ($lineId <= 0 || empty($mois) || empty($semaine) || empty($savoirsEssentiels)) {
+        $error = "Veuillez remplir tous les champs obligatoires pour la modification.";
+    } else {
+        try {
+            $stmt = $con->prepare("
+                UPDATE prevision_detail 
+                SET periode = ?, mois = ?, semaine_libelle = ?, savoirs_essentiels = ?, code = ?, observation = ?, activites = ?
+                WHERE id = ?
+            ");
+            $stmt->bind_param("sssssssi", $periode, $mois, $semaine, $savoirsEssentiels, $code, $observation, $activites, $lineId);
+            $stmt->execute();
+            $success = "Ligne de prévision mise à jour avec succès !";
+        } catch (Throwable $e) {
+            $error = "Erreur de modification : " . $e->getMessage();
+        }
+    }
+}
+
+// --- 4. SUPPRESSION D'UNE LIGNE ---
+if (isset($_GET['delete_line'])) {
     $lineId = (int)$_GET['delete_line'];
     try {
-        $stmt = $con->prepare("DELETE FROM prevision_detail WHERE id = ? AND prevision_id = ?");
-        $stmt->bind_param("ii", $lineId, $previsionId);
+        $stmt = $con->prepare("DELETE FROM prevision_detail WHERE id = ?");
+        $stmt->bind_param("i", $lineId);
         $stmt->execute();
-        header("Location: fiche_des_prevision.php?id=" . $previsionId);
+        header("Location: fiche_des_prevision.php" . ($previsionId > 0 ? "?id=" . $previsionId : ""));
         exit;
     } catch (Throwable $e) {
         $error = "Erreur de suppression : " . $e->getMessage();
     }
 }
 
-// --- 4. CHARGEMENT DE LA FICHE EN COURS ---
-$head        = null;
-$details     = [];
-$coursParsed = ['categorie' => '', 'sous_categorie' => ''];
-$isAnglais   = false;
+// --- 5. CHARGEMENT DES PRÉVISIONS ---
+$details = [];
+$head    = null;
 
-if ($previsionId > 0) {
-    try {
-        $stmt = $con->prepare("
+try {
+    if ($previsionId > 0) {
+        $stmtHead = $con->prepare("
             SELECT p.*, c.intitule AS cours_intitule, cl.description AS classe_nom, cy.description AS cycle_nom
             FROM prevision_matiere p
             JOIN cours c ON c.id = p.cours_id
@@ -161,38 +181,71 @@ if ($previsionId > 0) {
             LEFT JOIN cycle cy ON cy.id = cl.cycle
             WHERE p.id = ?
         ");
-        $stmt->bind_param("i", $previsionId);
-        $stmt->execute();
-        $head = $stmt->get_result()->fetch_assoc();
+        $stmtHead->bind_param("i", $previsionId);
+        $stmtHead->execute();
+        $head = $stmtHead->get_result()->fetch_assoc();
 
-        if ($head) {
-            $coursParsed = separerCoursEtBranche($head['cours_intitule']);
-            
-            // Détection si la prévision en cours concerne l'anglais
-            $intituleUpper = mb_strtoupper($head['cours_intitule'], 'UTF-8');
-            $isAnglais     = (strpos($intituleUpper, 'ANGLAIS') !== false || strpos($intituleUpper, 'ENGLISH') !== false);
+        $stmtD = $con->prepare("
+            SELECT d.*, p.id AS prevision_id, c.intitule AS cours_intitule, f.id AS fiche_id
+            FROM prevision_detail d
+            JOIN prevision_matiere p ON p.id = d.prevision_id
+            JOIN cours c ON c.id = p.cours_id
+            LEFT JOIN fiche_cours f ON f.prevision_detail_id = d.id
+            WHERE d.prevision_id = ?
+            ORDER BY d.id ASC
+        ");
+        $stmtD->bind_param("i", $previsionId);
+    } else if ($classeId > 0 && $enseignantId > 0) {
+        $stmtD = $con->prepare("
+            SELECT d.*, p.id AS prevision_id, c.intitule AS cours_intitule, f.id AS fiche_id
+            FROM prevision_detail d
+            JOIN prevision_matiere p ON p.id = d.prevision_id
+            JOIN cours c ON c.id = p.cours_id
+            LEFT JOIN fiche_cours f ON f.prevision_detail_id = d.id
+            WHERE c.classe_id = ? AND p.enseignant_id = ?
+            ORDER BY c.intitule ASC, d.id ASC
+        ");
+        $stmtD->bind_param("ii", $classeId, $enseignantId);
+    } else {
+        $stmtD = null;
+    }
 
-            $stmtD = $con->prepare("SELECT * FROM prevision_detail WHERE prevision_id = ? ORDER BY id ASC");
-            $stmtD->bind_param("i", $previsionId);
-            $stmtD->execute();
-            $resD = $stmtD->get_result();
-            while ($row = $resD->fetch_assoc()) {
-                $details[] = $row;
-            }
+    if ($stmtD) {
+        $stmtD->execute();
+        $resD = $stmtD->get_result();
+        while ($row = $resD->fetch_assoc()) {
+            $details[] = $row;
         }
-    } catch (Throwable $e) {
-        $error = "Erreur de chargement : " . $e->getMessage();
+    }
+} catch (Throwable $e) {
+    $error = "Erreur de chargement : " . $e->getMessage();
+}
+
+// --- 6. CHARGEMENT DE LA LISTE DES PRÉVISIONS EXISTANTES ---
+$listePrevisions = [];
+if ($classeId > 0 && $enseignantId > 0) {
+    $stmtP = $con->prepare("
+        SELECT p.id AS prevision_id, c.id AS cours_id, c.intitule AS cours_intitule
+        FROM prevision_matiere p
+        JOIN cours c ON c.id = p.cours_id
+        WHERE c.classe_id = ? AND p.enseignant_id = ?
+        ORDER BY c.intitule ASC
+    ");
+    $stmtP->bind_param("ii", $classeId, $enseignantId);
+    $stmtP->execute();
+    $resP = $stmtP->get_result();
+    while ($row = $resP->fetch_assoc()) {
+        $listePrevisions[] = $row;
     }
 }
 
-// --- 5. FILTRAGE DES COURS DE L'ENSEIGNANT VIA affectation_prof_classe ---
+// --- 7. CHARGEMENT DES COURS POUR CRÉATION ---
 $listeCours = [];
 if ($classeId > 0 && $enseignantId > 0) {
     $stmtC = $con->prepare("
-        SELECT DISTINCT c.id, c.intitule, cl.description AS classe_nom
+        SELECT DISTINCT c.id, c.intitule
         FROM affectation_prof_classe a
         INNER JOIN cours c ON c.id = a.cours_id
-        INNER JOIN classe cl ON cl.id = a.classe_id
         WHERE a.agent_id = ? AND a.classe_id = ?
         ORDER BY c.intitule ASC
     ");
@@ -215,7 +268,17 @@ require_once __DIR__ . '/../layout/navbar.php';
     vertical-align: middle;
 }
 
+.sortable-header {
+    cursor: pointer;
+    user-select: none;
+}
+
+.sortable-header:hover {
+    /* background-color: #343a40 !important; */
+}
+
 @media print {
+
     .no-print,
     .btn,
     nav,
@@ -232,106 +295,221 @@ require_once __DIR__ . '/../layout/navbar.php';
 <div class="container-fluid my-4 px-4">
 
     <?php if ($error): ?>
-    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+    <div class="alert alert-danger alert-dismissible fade show no-print" role="alert">
         <?= e($error) ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
     <?php endif; ?>
 
     <?php if ($success): ?>
-    <div class="alert alert-success alert-dismissible fade show" role="alert">
+    <div class="alert alert-success alert-dismissible fade show no-print" role="alert">
         <?= e($success) ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
     <?php endif; ?>
 
-    <!-- AUCUNE CLASSE SÉLECTIONNÉE -->
-    <?php if (!$classeId && !$head): ?>
+    <?php if (!$classeId): ?>
     <div class="alert alert-warning text-center my-5 py-4">
         <i class="bi bi-exclamation-triangle fs-1 d-block mb-2"></i>
         <h5>Aucune classe sélectionnée</h5>
-        <p class="mb-0">Veuillez choisir une classe dans le sélecteur de la barre de navigation pour continuer.</p>
+        <p class="mb-0">Veuillez choisir une classe dans la barre de navigation pour consulter vos prévisions.</p>
     </div>
 
-    <!-- AUCUNE FICHE SÉLECTIONNÉE / ÉCRAN DE DÉPART -->
-    <?php elseif (!$head): ?>
-    <div class="text-center my-5 py-5">
-        <i class="bi bi-journal-text fs-1 text-muted d-block mb-3"></i>
-        <h4>Fiche de Prévision des Matières</h4>
-        <p class="text-muted mb-4">Veuillez ouvrir ou créer une fiche de prévision pour la classe actuellement sélectionnée.</p>
-        <button class="btn btn-primary btn-lg shadow-sm" data-bs-toggle="modal" data-bs-target="#modalCreateHead">
-            <i class="bi bi-file-earmark-plus me-2"></i>+ Créer une fiche de prévision
-        </button>
-    </div>
-
-    <!-- PLAN DE TRAVAIL ET FICHE DÉTAILLÉE -->
     <?php else: ?>
 
-    <div class="d-flex justify-content-between align-items-center mb-3">
+    <!-- BARRE D'ACTIONS ET FILTRE -->
+    <div class="d-flex justify-content-between align-items-center mb-3 no-print flex-wrap gap-2">
         <div>
-            <h1 class="h4 mb-0 text-uppercase fw-bold">PLAN DE TRAVAIL : <?= e($head['cours_intitule']) ?></h1>
+            <h1 class="h4 mb-0 text-uppercase fw-bold">
+                <?= $head ? 'PLAN DE TRAVAIL : ' . e($head['cours_intitule']) : 'TOUTES MES PRÉVISIONS' ?>
+            </h1>
             <span class="text-muted small">
-                Classe : <strong><?= e($head['classe_nom']) ?> (<?= e($head['cycle_nom'] ?? '—') ?>)</strong> |
-                Année Scolaire : <strong><?= e($head['anneeScolaire']) ?></strong>
+                Consultez et gérez l'ensemble des prévisions de la classe.
             </span>
         </div>
-        <div class="no-print">
-            <button class="btn btn-outline-primary btn-sm me-2" data-bs-toggle="modal" data-bs-target="#modalCreateHead">
-                <i class="bi bi-journal-plus me-1"></i> Nouveau / Changer de cours
+        <div class="d-flex align-items-center gap-2">
+            <!-- CHAMP DE RECHERCHE / FILTRE -->
+            <input type="text" id="searchInput" class="form-control form-control-sm"
+                placeholder="🔍 Filtrer les résultats..." style="width: 200px;">
+
+            <?php if ($previsionId > 0): ?>
+            <a href="fiche_des_prevision.php" class="btn btn-outline-secondary btn-sm me-1">
+                &larr; Voir tout
+            </a>
+            <?php endif; ?>
+
+            <button class="btn btn-primary btn-sm me-1" data-bs-toggle="modal" data-bs-target="#modalCreateHead">
+                <i class="bi bi-journal-plus me-1"></i> Créer/Ouvrir une Fiche
             </button>
-            <button class="btn btn-success btn-sm me-2" data-bs-toggle="modal" data-bs-target="#modalAddLecon">
-                + Ajouter une ligne
+
+            <?php if (!empty($listePrevisions)): ?>
+            <button class="btn btn-success btn-sm me-1" data-bs-toggle="modal" data-bs-target="#modalAddLecon">
+                <i class="bi bi-plus-circle me-1"></i> + Ajouter une ligne
             </button>
+            <?php endif; ?>
         </div>
     </div>
 
-    <div class="card shadow-sm border-0">
+    <!-- TABLEAU PRINCIPAL -->
+    <div class="cards dshadow-sm border-0" style="border:none !important">
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-bordered align-middle text-center mb-0 style-grid">
-                    <thead class="table-light fw-bold small text-uppercase">
+                <table class="table table-bordered table-hover align-middle text-center" id="mainTable">
+                    <thead class="table small text-uppercase">
                         <tr>
-                            <th style="width: 8%;">PERIODE</th>
-                            <th style="width: 9%;">MOIS</th>
-                            <th style="width: 10%;">SEMAINE</th>
-                            <th style="width: 12%;">BRANCHE/CATEGORIE</th>
-                            <th style="width: 12%;">SOUS-BRANCHE/CATEGORIE</th>
-                            <th>SAVOIRS ESSENTIELS</th>
-                            <th style="width: 7%;">N° FICHE</th>
-                            <th style="width: 10%;">OBSERVATION</th>
-                            <th style="width: 12%;" class="no-print">ACTIONS</th>
+                            <!-- <th class="sortable-header" onclick="sortTable(0)" style="width: 11%;">COURS / MATIÈRE ⇕
+                            </th> -->
+                            <th class="sortable-header" onclick="sortTable(1)" style="width: 9%;">PÉRIODE ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(2)" style="width: 9%;">MOIS ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(3)" style="width: 10%;">SEMAINE ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(4)" style="width: 11%;">BRANCHE ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(5)" style="width: 11%;">SOUS-BRANCHE ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(6)">SAVOIRS ESSENTIELS ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(7)" style="width: 9%;">CODE / N° ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(8)" style="width: 9%;">OBS ⇕</th>
+                            <th style="width: 18%;" class="no-print">#</th>
                         </tr>
                     </thead>
-                    <tbody class="small">
+                    <tbody class="small" id="tableBody">
                         <?php if (empty($details)): ?>
                         <tr>
-                            <td colspan="9" class="text-muted py-4">Aucune leçon enregistrée. Cliquez sur "+ Ajouter une ligne".</td>
+                            <td colspan="10" class="text-muted py-4">
+                                Aucune prévision enregistrée. Cliquez sur <strong>"Créer/Ouvrir une Fiche"</strong> pour
+                                commencer.
+                            </td>
                         </tr>
                         <?php else: ?>
-                        <?php foreach ($details as $row): ?>
+                        <?php foreach ($details as $row): 
+                            $parsed = separerCoursEtBranche($row['cours_intitule'] ?? '');
+                            $coursUpper = mb_strtoupper($row['cours_intitule'] ?? '', 'UTF-8');
+                            $isAnglais = (strpos($coursUpper, 'ANGLAIS') !== false || strpos($coursUpper, 'ENGLISH') !== false);
+                            
+                            $pageTarget = $isAnglais ? 'fiche_des_prevision_anglais.php' : 'fiche_des_prevision.php';
+                            $targetLessonFile = $isAnglais ? 'fiche_de_cours_anglais.php' : 'fiche_de_cours.php';
+                        ?>
                         <tr>
-                            <td class="fw-bold bg-light"><?= e($row['periode']) ?></td>
-                            <td><?= e($row['mois']) ?></td>
-                            <td><?= e($row['semaine_libelle']) ?></td>
-                            <td class="fw-bold text-dark"><?= e($coursParsed['categorie']) ?></td>
-                            <td class="fw-semibold text-primary"><?= e($coursParsed['sous_categorie']) ?></td>
-                            <td class="text-start"><?= nl2br(e($row['savoirs_essentiels'])) ?></td>
+                            <!-- <td class="fw-bold bg-light text-start text-uppercase"><?= e($row['cours_intitule']) ?></td> -->
+                            <td class="text-primary"><?= e($row['periode'] ?? '') ?></td>
+                            <td><?= e($row['mois'] ?? '') ?></td>
+                            <td class="text-danger"><?= e($row['semaine_libelle'] ?? '') ?></td>
+                            <td class="fw-bold text-dark"><?= e($parsed['categorie']) ?></td>
+                            <td class="fw-semibold text-primary"><?= e($parsed['sous_categorie']) ?></td>
+                            <td class="text-start"><?= nl2br(e($row['savoirs_essentiels'] ?? '')) ?></td>
                             <td><code class="fw-bold"><?= e($row['code'] ?: '—') ?></code></td>
                             <td class="text-muted"><?= e($row['observation'] ?: '—') ?></td>
                             <td class="no-print">
-                                <!-- REDIRECTION DYNAMIQUE SELON SI C'EST L'ANGLAIS OU AUTRE -->
-                                <?php $targetLessonFile = $isAnglais ? 'fiche_de_cours_anglais.php' : 'fiche_de_cours.php'; ?>
+                                <a href="<?= $pageTarget ?>?id=<?= (int)$row['prevision_id'] ?>"
+                                    class="btn btn-dark btn-sm me-1 mb-1" title="Ouvrir la fiche de prévision complète">
+                                    <i class="bi bi-box-arrow-in-right"></i> Ouvrir
+                                </a>
+
+                                <button type="button" class="btn btn-warning btn-sm me-1 mb-1" data-bs-toggle="modal"
+                                    data-bs-target="#modalEditLine<?= (int)$row['id'] ?>" title="Modifier la ligne">
+                                    <i class="bi bi-pencil-square"></i> Modifier
+                                </button>
+
                                 <a href="<?= $targetLessonFile ?>?prevision_detail_id=<?= (int)$row['id'] ?>"
-                                    class="btn btn-primary btn-sm me-1 mb-1" title="Préparer la fiche de cours">
+                                    class="btn btn-sm me-1 mb-1 <?= !empty($row['fiche_id']) ? 'btn-success' : 'btn-outline-primary' ?>"
+                                    title="Fiche de cours">
                                     <i class="bi bi-file-earmark-text"></i> Fiche détaillée
                                 </a>
 
-                                <!-- Bouton de suppression -->
-                                <a href="?id=<?= $previsionId ?>&delete_line=<?= (int)$row['id'] ?>"
+                                <a href="?delete_line=<?= (int)$row['id'] ?><?= $previsionId > 0 ? '&id='.$previsionId : '' ?>"
                                     class="btn btn-danger btn-sm mb-1"
-                                    onclick="return confirm('Supprimer cette ligne ?')" title="Supprimer">&times;</a>
+                                    onclick="return confirm('Supprimer cette ligne de prévision ?')"
+                                    title="Supprimer">&times;</a>
                             </td>
                         </tr>
+
+                        <!-- MODAL DE MODIFICATION POUR CETTE LIGNE -->
+                        <div class="modal fade" id="modalEditLine<?= (int)$row['id'] ?>" tabindex="-1"
+                            aria-hidden="true">
+                            <div class="modal-dialog modal-lg text-start">
+                                <div class="modal-content">
+                                    <form method="POST">
+                                        <input type="hidden" name="action_edit_lecon" value="1">
+                                        <input type="hidden" name="line_id" value="<?= (int)$row['id'] ?>">
+                                        <div class="modal-header bg-warning text-dark">
+                                            <h5 class="modal-title h6"><i class="bi bi-pencil-square me-1"></i> Modifier
+                                                la prévision</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"
+                                                aria-label="Fermer"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="row g-3">
+                                                <div class="col-md-4">
+                                                    <label class="form-label small fw-semibold">Période <span
+                                                            class="text-danger">*</span></label>
+                                                    <select name="periode" class="form-select form-select-sm" required>
+                                                        <option value="1ÈRE PERIODE"
+                                                            <?= ($row['periode'] == '1ÈRE PERIODE') ? 'selected' : '' ?>>
+                                                            1ÈRE PERIODE</option>
+                                                        <option value="2ÈME PERIODE"
+                                                            <?= ($row['periode'] == '2ÈME PERIODE') ? 'selected' : '' ?>>
+                                                            2ÈME PERIODE</option>
+                                                        <option value="3ÈME PERIODE"
+                                                            <?= ($row['periode'] == '3ÈME PERIODE') ? 'selected' : '' ?>>
+                                                            3ÈME PERIODE</option>
+                                                        <option value="4ÈME PERIODE"
+                                                            <?= ($row['periode'] == '4ÈME PERIODE') ? 'selected' : '' ?>>
+                                                            4ÈME PERIODE</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <label class="form-label small fw-semibold">Mois <span
+                                                            class="text-danger">*</span></label>
+                                                    <input type="text" name="mois" class="form-control form-control-sm"
+                                                        value="<?= e($row['mois']) ?>" required>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <label class="form-label small fw-semibold">Semaine <span
+                                                            class="text-danger">*</span></label>
+                                                    <input type="text" name="semaine_libelle"
+                                                        class="form-control form-control-sm"
+                                                        value="<?= e($row['semaine_libelle']) ?>" required>
+                                                </div>
+                                                <div class="col-md-12">
+                                                    <label class="form-label small fw-semibold">Savoirs Essentiels
+                                                        (Contenu) <span class="text-danger">*</span></label>
+                                                    <textarea name="savoirs_essentiels"
+                                                        class="form-control form-control-sm" rows="3"
+                                                        required><?= e($row['savoirs_essentiels']) ?></textarea>
+                                                </div>
+
+                                                <?php if ($isAnglais): ?>
+                                                <div class="col-md-4">
+                                                    <label class="form-label small fw-semibold">Activités</label>
+                                                    <br><small class="text-danger">N.B: Activités, c'est pour les cours
+                                                        d'anglais</small>
+                                                    <input type="text" name="activites"
+                                                        class="form-control form-control-sm"
+                                                        value="<?= e($row['activites'] ?? '') ?>">
+                                                </div>
+                                                <?php endif; ?>
+
+                                                <div class="col-md-4">
+                                                    <label class="form-label small fw-semibold">Code / N° Fiche</label>
+                                                    <input type="text" name="code" class="form-control form-control-sm"
+                                                        value="<?= e($row['code']) ?>" readonly>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <label class="form-label small fw-semibold">Observation</label>
+                                                    <input type="text" name="observation"
+                                                        class="form-control form-control-sm"
+                                                        value="<?= e($row['observation'] ?? '') ?>">
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary btn-sm"
+                                                data-bs-dismiss="modal">Annuler</button>
+                                            <button type="submit" class="btn btn-warning btn-sm">Mettre à jour</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+
                         <?php endforeach; ?>
                         <?php endif; ?>
                     </tbody>
@@ -340,20 +518,36 @@ require_once __DIR__ . '/../layout/navbar.php';
         </div>
     </div>
 
-    <!-- MODAL D'AJOUT DE LEÇON -->
+    <!-- MODAL : AJOUT D'UNE LIGNE -->
     <div class="modal fade" id="modalAddLecon" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <form method="POST">
                     <input type="hidden" name="action_add_lecon" value="1">
-                    <div class="modal-header">
-                        <h5 class="modal-title h6">Ajouter une leçon au plan de travail</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+                    <div class="modal-header bg-dark text-white">
+                        <h5 class="modal-title h6"><i class="bi bi-plus-circle me-1"></i> Ajouter une prévision</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                            aria-label="Fermer"></button>
                     </div>
                     <div class="modal-body">
                         <div class="row g-3">
+                            <div class="col-md-12">
+                                <label class="form-label small fw-semibold">Choisir le cours / la matière <span
+                                        class="text-danger">*</span></label>
+                                <select name="target_prevision_id" id="selectTargetPrevision"
+                                    class="form-select form-select-sm" required>
+                                    <?php foreach ($listePrevisions as $lp): ?>
+                                    <option value="<?= (int)$lp['prevision_id'] ?>"
+                                        data-intitule="<?= e(mb_strtoupper($lp['cours_intitule'])) ?>"
+                                        <?= ($previsionId == $lp['prevision_id']) ? 'selected' : '' ?>>
+                                        <?= e($lp['cours_intitule']) ?>
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
                             <div class="col-md-4">
-                                <label class="form-label small fw-semibold">Période <span class="text-danger">*</span></label>
+                                <label class="form-label small fw-semibold">Période <span
+                                        class="text-danger">*</span></label>
                                 <select name="periode" class="form-select form-select-sm" required>
                                     <option value="1ÈRE PERIODE" selected>1ÈRE PERIODE</option>
                                     <option value="2ÈME PERIODE">2ÈME PERIODE</option>
@@ -362,31 +556,96 @@ require_once __DIR__ . '/../layout/navbar.php';
                                 </select>
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label small fw-semibold">Mois <span class="text-danger">*</span></label>
-                                <input type="text" name="mois" class="form-control form-control-sm" placeholder="ex: SEPTEMBRE 2026" required>
+                                <label class="form-label small fw-semibold">Mois <span
+                                        class="text-danger">*</span></label>
+                                <input type="text" name="mois" class="form-control form-control-sm"
+                                    placeholder="ex: SEPTEMBRE 2026" required>
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label small fw-semibold">Semaine <span class="text-danger">*</span></label>
-                                <input type="text" name="semaine_libelle" class="form-control form-control-sm" placeholder="ex: Du 07 au 11" required>
+                                <label class="form-label small fw-semibold">Semaine <span
+                                        class="text-danger">*</span></label>
+                                <input type="text" name="semaine_libelle" class="form-control form-control-sm"
+                                    placeholder="ex: Du 07 au 11" required>
                             </div>
                             <div class="col-md-12">
-                                <label class="form-label small fw-semibold">Savoirs Essentiels (Contenu) <span class="text-danger">*</span></label>
-                                <textarea name="savoirs_essentiels" class="form-control form-control-sm" rows="3" placeholder="ex: Les fonctions de l'adjectif qualificatif." required></textarea>
+                                <label class="form-label small fw-semibold">Savoirs Essentiels (Contenu) <span
+                                        class="text-danger">*</span></label>
+                                <textarea name="savoirs_essentiels" class="form-control form-control-sm" rows="3"
+                                    placeholder="ex: Les fonctions de l'adjectif qualificatif." required></textarea>
                             </div>
+
+                            <div class="col-md-4" id="containerActivites">
+                                <label class="form-label small fw-semibold">Activités</label>
+                                <input type="text" name="activites" class="form-control form-control-sm"
+                                    placeholder="ex: Exercices pratiques">
+                            </div>
+
                             <div class="col-md-4">
-                                <label class="form-label small fw-semibold">Code (Optionnel / Auto)</label>
-                                <input type="text" name="code" class="form-control form-control-sm" placeholder="ex: Auto (C1.1, C1.2...)" readonly>
-                                <span class="text-muted" style="font-size: 0.75rem;">Laissez vide pour générer automatiquement.</span>
+                                <label class="form-label small fw-semibold">Code / N° Fiche (Auto)</label>
+                                <input type="text" name="code" class="form-control form-control-sm"
+                                    placeholder="Auto (ex: C1.1)">
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label small fw-semibold">Observation</label>
-                                <input type="text" name="observation" class="form-control form-control-sm" placeholder="ex: Non vu">
+                                <input type="text" name="observation" class="form-control form-control-sm"
+                                    placeholder="ex: En attente">
                             </div>
                         </div>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
-                        <button type="submit" class="btn btn-primary btn-sm">Enregistrer la leçon</button>
+                        <button type="submit" class="btn btn-primary btn-sm">Enregistrer la ligne</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL : CRÉER / OUVRIR FICHE MÈRE -->
+    <div class="modal fade" id="modalCreateHead" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="POST">
+                    <input type="hidden" name="action_create_head" value="1">
+                    <div class="modal-header bg-primary text-white">
+                        <h5 class="modal-title h6"><i class="bi bi-file-earmark-plus me-2"></i>Ouvrir ou Créer une fiche
+                            de matière</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                            aria-label="Fermer"></button>
+                    </div>
+                    <div class="modal-body">
+                        <?php if (empty($listeCours)): ?>
+                        <div class="text-center text-muted py-3">
+                            <i class="bi bi-journal-x fs-2 d-block mb-2"></i>
+                            Aucun cours ne vous a été attribué pour cette classe.
+                        </div>
+                        <?php else: ?>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Sélectionner un cours <span
+                                    class="text-danger">*</span></label>
+                            <select name="cours_id" class="form-select" required>
+                                <option value="">-- Choisir un cours --</option>
+                                <?php foreach ($listeCours as $cr): ?>
+                                <option value="<?= (int)$cr['id'] ?>">
+                                    <?= e($cr['intitule']) ?>
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Année Scolaire <span
+                                    class="text-danger">*</span></label>
+                            <input type="text" name="anneeScolaire" class="form-control" value="<?= e($anneeEnCours) ?>"
+                                readonly required>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                        <?php if (!empty($listeCours)): ?>
+                        <button type="submit" class="btn btn-primary btn-sm">Ouvrir / Créer &rarr;</button>
+                        <?php endif; ?>
                     </div>
                 </form>
             </div>
@@ -395,53 +654,78 @@ require_once __DIR__ . '/../layout/navbar.php';
 
     <?php endif; ?>
 
-    <!-- MODAL DE CRÉATION / SÉLECTION DE FICHE DE PRÉVISION -->
-    <div class="modal modal-lg fade" id="modalCreateHead" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <form method="POST">
-                    <input type="hidden" name="action_create_head" value="1">
-                    <div class="modal-header bg-primary text-white">
-                        <h5 class="modal-title h6"><i class="bi bi-file-earmark-plus me-2"></i>Fiche de Prévision des Matières</h5>
-                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fermer"></button>
-                    </div>
-                    <div class="modal-body">
-                        <?php if (empty($listeCours)): ?>
-                        <div class="text-center text-muted py-3">
-                            <i class="bi bi-journal-x fs-2 d-block mb-2"></i>
-                            Aucun cours ne vous a été affecté pour cette classe.
-                        </div>
-                        <?php else: ?>
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold">Sélectionner un cours <span class="text-danger">*</span></label>
-                            <select name="cours_id" class="form-select" required>
-                                <option value="">-- Choisir un cours --</option>
-                                <?php foreach ($listeCours as $cr): ?>
-                                <option value="<?= (int)$cr['id'] ?>"
-                                    <?= ($head && $head['cours_id'] == $cr['id']) ? 'selected' : '' ?>>
-                                    <?= e($cr['intitule']) ?>
-                                </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold">Année Scolaire <span class="text-danger">*</span></label>
-                            <input type="text" name="anneeScolaire" class="form-control" value="<?= e($anneeEnCours) ?>" readonly required>
-                        </div>
-                        <?php endif; ?>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
-                        <?php if (!empty($listeCours)): ?>
-                        <button type="submit" class="btn btn-primary btn-sm">Ouvrir / Créer la fiche &rarr;</button>
-                        <?php endif; ?>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
 </div>
+
+<!-- SCRIPTS DYNAMIQUES: MASQUAGE, RECHERCHE ET TRI -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+
+    // 1. MASQUAGE/AFFICHAGE DU CHAMP ACTIVITÉS
+    const selectCours = document.getElementById('selectTargetPrevision');
+    const containerActivites = document.getElementById('containerActivites');
+
+    function checkActiviteVisibility() {
+        if (!selectCours || !containerActivites) return;
+        const selectedOption = selectCours.options[selectCours.selectedIndex];
+        if (!selectedOption) return;
+
+        const intitule = (selectedOption.getAttribute('data-intitule') || '').toUpperCase();
+        if (intitule.includes('ANGLAIS') || intitule.includes('ENGLISH')) {
+            containerActivites.style.display = 'block';
+        } else {
+            containerActivites.style.display = 'none';
+        }
+    }
+
+    if (selectCours) {
+        selectCours.addEventListener('change', checkActiviteVisibility);
+        checkActiviteVisibility();
+    }
+
+    // 2. FILTRAGE EN TEMPS RÉEL (RECHERCHE)
+    const searchInput = document.getElementById('searchInput');
+    const tableBody = document.getElementById('tableBody');
+
+    if (searchInput && tableBody) {
+        searchInput.addEventListener('input', function() {
+            const filter = this.value.toLowerCase();
+            const rows = tableBody.getElementsByTagName('tr');
+
+            for (let i = 0; i < rows.length; i++) {
+                const text = rows[i].textContent.toLowerCase();
+                rows[i].style.display = text.includes(filter) ? '' : 'none';
+            }
+        });
+    }
+});
+
+// 3. TRI DES COLONNES DU TABLEAU
+let sortDirections = {};
+
+function sortTable(columnIndex) {
+    const table = document.getElementById("mainTable");
+    const tbody = table.querySelector("tbody");
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+
+    // Inverser la direction du tri pour la colonne
+    sortDirections[columnIndex] = !sortDirections[columnIndex];
+    const isAscending = sortDirections[columnIndex];
+
+    rows.sort((rowA, rowB) => {
+        const cellA = rowA.children[columnIndex]?.innerText.trim().toLowerCase() || '';
+        const cellB = rowB.children[columnIndex]?.innerText.trim().toLowerCase() || '';
+
+        return isAscending ?
+            cellA.localeCompare(cellB, undefined, {
+                numeric: true
+            }) :
+            cellB.localeCompare(cellA, undefined, {
+                numeric: true
+            });
+    });
+
+    rows.forEach(row => tbody.appendChild(row));
+}
+</script>
 
 <?php require_once __DIR__ . '/../layout/footer.php'; ?>
