@@ -274,3 +274,9 @@ CREATE TABLE `fiche_cours` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 ALTER TABLE `prevision_detail` ADD `activites` VARCHAR(20) NOT NULL AFTER `observation`;
+
+#01.09.2026
+
+ALTER TABLE cours_lecons MODIFY fichier VARCHAR(255) NULL;
+ALTER TABLE cours_lecons ADD COLUMN contenu LONGTEXT NULL AFTER description;
+ALTER TABLE prevision_matiere ADD COLUMN fichier_joint VARCHAR(255) NULL AFTER anneeScolaire;

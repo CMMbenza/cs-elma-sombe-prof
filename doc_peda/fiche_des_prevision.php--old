@@ -39,7 +39,9 @@ $enseignantId = (int)($prof['id'] ?? 0);
 $classeId     = get_current_classe(); 
 $previsionId  = (int)($_GET['id'] ?? 0);
 
-// --- 1. CRÉATION / OUVERTURE D'UNE FICHE SPÉCIFIQUE ---
+$uploadDir = __DIR__ . '/../../uploads/previsions/';
+
+// --- 1. CRÉATION / OUVERTURE D'UNE FICHE SPÉCIFIQUE (AVEC PIÈCE JOINTE GLOBALE) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create_head'])) {
     $coursId       = (int)($_POST['cours_id'] ?? 0);
     $anneeScolaire = trim($_POST['anneeScolaire'] ?? '');
@@ -54,16 +56,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create_head'])
             $coursInfo = $stmtC->get_result()->fetch_assoc();
             $intituleCours = mb_strtoupper($coursInfo['intitule'] ?? '', 'UTF-8');
 
-            $chk = $con->prepare("SELECT id FROM prevision_matiere WHERE cours_id = ? AND anneeScolaire = ? LIMIT 1");
+            // Gestion de la pièce jointe globale
+            $filename = null;
+            if (isset($_FILES['fichier_joint']) && $_FILES['fichier_joint']['error'] === UPLOAD_ERR_OK) {
+                if (!is_dir($uploadDir)) {
+                    mkdir($uploadDir, 0777, true);
+                }
+                $tmpName   = $_FILES['fichier_joint']['tmp_name'];
+                $extension = strtolower(pathinfo($_FILES['fichier_joint']['name'], PATHINFO_EXTENSION));
+                $filename  = 'prevision_globale_' . $coursId . '_' . time() . '.' . $extension;
+                move_uploaded_file($tmpName, $uploadDir . $filename);
+            }
+
+            $chk = $con->prepare("SELECT id, fichier_joint FROM prevision_matiere WHERE cours_id = ? AND anneeScolaire = ? LIMIT 1");
             $chk->bind_param("is", $coursId, $anneeScolaire);
             $chk->execute();
             $existing = $chk->get_result()->fetch_assoc();
 
             if ($existing) {
                 $previsionId = (int)$existing['id'];
+                if ($filename) {
+                    if (!empty($existing['fichier_joint'])) {
+                        @unlink($uploadDir . $existing['fichier_joint']);
+                    }
+                    $stmtUp = $con->prepare("UPDATE prevision_matiere SET fichier_joint = ? WHERE id = ?");
+                    $stmtUp->bind_param("si", $filename, $previsionId);
+                    $stmtUp->execute();
+                }
             } else {
-                $stmt = $con->prepare("INSERT INTO prevision_matiere (enseignant_id, cours_id, anneeScolaire) VALUES (?, ?, ?)");
-                $stmt->bind_param("iis", $enseignantId, $coursId, $anneeScolaire);
+                $stmt = $con->prepare("INSERT INTO prevision_matiere (enseignant_id, cours_id, anneeScolaire, fichier_joint) VALUES (?, ?, ?, ?)");
+                $stmt->bind_param("iiss", $enseignantId, $coursId, $anneeScolaire, $filename);
                 $stmt->execute();
                 $previsionId = (int)$con->insert_id;
             }
@@ -111,11 +133,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_lecon'])) 
                 $code = "C" . $pNum . "." . $nextIndex;
             }
 
+            $lineFile = null;
+            if (isset($_FILES['ligne_fichier_joint']) && $_FILES['ligne_fichier_joint']['error'] === UPLOAD_ERR_OK) {
+                if (!is_dir($uploadDir)) {
+                    mkdir($uploadDir, 0777, true);
+                }
+                $extension = strtolower(pathinfo($_FILES['ligne_fichier_joint']['name'], PATHINFO_EXTENSION));
+                $lineFile  = 'prevision_ligne_' . time() . '_' . uniqid() . '.' . $extension;
+                move_uploaded_file($_FILES['ligne_fichier_joint']['tmp_name'], $uploadDir . $lineFile);
+            }
+
             $stmt = $con->prepare("
-                INSERT INTO prevision_detail (prevision_id, periode, mois, semaine_libelle, savoirs_essentiels, code, observation, activites)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO prevision_detail (prevision_id, periode, mois, semaine_libelle, savoirs_essentiels, code, observation, activites, piece_jointe)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
-            $stmt->bind_param("isssssss", $targetPrevisionId, $periode, $mois, $semaine, $savoirsEssentiels, $code, $observation, $activites);
+            $stmt->bind_param("issssssss", $targetPrevisionId, $periode, $mois, $semaine, $savoirsEssentiels, $code, $observation, $activites, $lineFile);
             $stmt->execute();
             $success = "Prévision enregistrée avec le code " . e($code) . " !";
         } catch (Throwable $e) {
@@ -139,12 +171,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_edit_lecon']))
         $error = "Veuillez remplir tous les champs obligatoires pour la modification.";
     } else {
         try {
+            $stmtCheck = $con->prepare("SELECT piece_jointe FROM prevision_detail WHERE id = ?");
+            $stmtCheck->bind_param("i", $lineId);
+            $stmtCheck->execute();
+            $currFile = $stmtCheck->get_result()->fetch_assoc()['piece_jointe'] ?? null;
+
+            if (isset($_FILES['edit_ligne_fichier_joint']) && $_FILES['edit_ligne_fichier_joint']['error'] === UPLOAD_ERR_OK) {
+                if (!empty($currFile)) {
+                    @unlink($uploadDir . $currFile);
+                }
+                $extension = strtolower(pathinfo($_FILES['edit_ligne_fichier_joint']['name'], PATHINFO_EXTENSION));
+                $currFile  = 'prevision_ligne_' . time() . '_' . uniqid() . '.' . $extension;
+                move_uploaded_file($_FILES['edit_ligne_fichier_joint']['tmp_name'], $uploadDir . $currFile);
+            }
+
             $stmt = $con->prepare("
                 UPDATE prevision_detail 
-                SET periode = ?, mois = ?, semaine_libelle = ?, savoirs_essentiels = ?, code = ?, observation = ?, activites = ?
+                SET periode = ?, mois = ?, semaine_libelle = ?, savoirs_essentiels = ?, code = ?, observation = ?, activites = ?, piece_jointe = ?
                 WHERE id = ?
             ");
-            $stmt->bind_param("sssssssi", $periode, $mois, $semaine, $savoirsEssentiels, $code, $observation, $activites, $lineId);
+            $stmt->bind_param("ssssssssi", $periode, $mois, $semaine, $savoirsEssentiels, $code, $observation, $activites, $currFile, $lineId);
             $stmt->execute();
             $success = "Ligne de prévision mise à jour avec succès !";
         } catch (Throwable $e) {
@@ -157,6 +203,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_edit_lecon']))
 if (isset($_GET['delete_line'])) {
     $lineId = (int)$_GET['delete_line'];
     try {
+        $stmtCheck = $con->prepare("SELECT piece_jointe FROM prevision_detail WHERE id = ?");
+        $stmtCheck->bind_param("i", $lineId);
+        $stmtCheck->execute();
+        $currFile = $stmtCheck->get_result()->fetch_assoc()['piece_jointe'] ?? null;
+        if (!empty($currFile)) {
+            @unlink($uploadDir . $currFile);
+        }
+
         $stmt = $con->prepare("DELETE FROM prevision_detail WHERE id = ?");
         $stmt->bind_param("i", $lineId);
         $stmt->execute();
@@ -273,10 +327,6 @@ require_once __DIR__ . '/../layout/navbar.php';
     user-select: none;
 }
 
-.sortable-header:hover {
-    /* background-color: #343a40 !important; */
-}
-
 @media print {
 
     .no-print,
@@ -328,7 +378,6 @@ require_once __DIR__ . '/../layout/navbar.php';
             </span>
         </div>
         <div class="d-flex align-items-center gap-2">
-            <!-- CHAMP DE RECHERCHE / FILTRE -->
             <input type="text" id="searchInput" class="form-control form-control-sm"
                 placeholder="🔍 Filtrer les résultats..." style="width: 200px;">
 
@@ -350,6 +399,20 @@ require_once __DIR__ . '/../layout/navbar.php';
         </div>
     </div>
 
+    <!-- BLOC FICHIER JOINT GLOBAL (SI PRÉSENT) -->
+    <?php if (!empty($head['fichier_joint'])): ?>
+    <div class="alert alert-info d-flex align-items-center justify-content-between mb-3 no-print shadow-sm">
+        <div>
+            <i class="bi bi-file-earmark-check fs-4 me-2"></i>
+            <strong>Document global attaché :</strong> La prévision complète pour ce cours est également téléchargeable
+            sous forme de fichier.
+        </div>
+        <a href="/uploads/previsions/<?= e($head['fichier_joint']) ?>" target="_blank" class="btn btn-sm btn-primary">
+            📎 Télécharger / Voir le fichier global
+        </a>
+    </div>
+    <?php endif; ?>
+
     <!-- TABLEAU PRINCIPAL -->
     <div class="cards dshadow-sm border-0" style="border:none !important">
         <div class="card-body p-0">
@@ -357,16 +420,15 @@ require_once __DIR__ . '/../layout/navbar.php';
                 <table class="table table-bordered table-hover align-middle text-center" id="mainTable">
                     <thead class="table small text-uppercase">
                         <tr>
-                            <!-- <th class="sortable-header" onclick="sortTable(0)" style="width: 11%;">COURS / MATIÈRE ⇕
-                            </th> -->
-                            <th class="sortable-header" onclick="sortTable(1)" style="width: 9%;">PÉRIODE ⇕</th>
-                            <th class="sortable-header" onclick="sortTable(2)" style="width: 9%;">MOIS ⇕</th>
-                            <th class="sortable-header" onclick="sortTable(3)" style="width: 10%;">SEMAINE ⇕</th>
-                            <th class="sortable-header" onclick="sortTable(4)" style="width: 11%;">BRANCHE ⇕</th>
-                            <th class="sortable-header" onclick="sortTable(5)" style="width: 11%;">SOUS-BRANCHE ⇕</th>
-                            <th class="sortable-header" onclick="sortTable(6)">SAVOIRS ESSENTIELS ⇕</th>
-                            <th class="sortable-header" onclick="sortTable(7)" style="width: 9%;">CODE / N° ⇕</th>
-                            <th class="sortable-header" onclick="sortTable(8)" style="width: 9%;">OBS ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(0)" style="width: 9%;">PÉRIODE ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(1)" style="width: 9%;">MOIS ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(2)" style="width: 10%;">SEMAINE ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(3)" style="width: 11%;">BRANCHE ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(4)" style="width: 11%;">SOUS-BRANCHE ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(5)">SAVOIRS ESSENTIELS ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(6)" style="width: 8%;">CODE / N° ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(7)" style="width: 8%;">OBS ⇕</th>
+                            <th style="width: 8%;">PJ ⇕</th>
                             <th style="width: 18%;" class="no-print">#</th>
                         </tr>
                     </thead>
@@ -388,7 +450,6 @@ require_once __DIR__ . '/../layout/navbar.php';
                             $targetLessonFile = $isAnglais ? 'fiche_de_cours_anglais.php' : 'fiche_de_cours.php';
                         ?>
                         <tr>
-                            <!-- <td class="fw-bold bg-light text-start text-uppercase"><?= e($row['cours_intitule']) ?></td> -->
                             <td class="text-primary"><?= e($row['periode'] ?? '') ?></td>
                             <td><?= e($row['mois'] ?? '') ?></td>
                             <td class="text-danger"><?= e($row['semaine_libelle'] ?? '') ?></td>
@@ -397,6 +458,16 @@ require_once __DIR__ . '/../layout/navbar.php';
                             <td class="text-start"><?= nl2br(e($row['savoirs_essentiels'] ?? '')) ?></td>
                             <td><code class="fw-bold"><?= e($row['code'] ?: '—') ?></code></td>
                             <td class="text-muted"><?= e($row['observation'] ?: '—') ?></td>
+                            <td>
+                                <?php if (!empty($row['piece_jointe'])): ?>
+                                <a href="/uploads/previsions/<?= e($row['piece_jointe']) ?>" target="_blank"
+                                    class="btn btn-sm btn-outline-primary" title="Ouvrir la pièce jointe">
+                                    📎 Fichier
+                                </a>
+                                <?php else: ?>
+                                <span class="text-muted">—</span>
+                                <?php endif; ?>
+                            </td>
                             <td class="no-print">
                                 <a href="<?= $pageTarget ?>?id=<?= (int)$row['prevision_id'] ?>"
                                     class="btn btn-dark btn-sm me-1 mb-1" title="Ouvrir la fiche de prévision complète">
@@ -426,7 +497,7 @@ require_once __DIR__ . '/../layout/navbar.php';
                             aria-hidden="true">
                             <div class="modal-dialog modal-lg text-start">
                                 <div class="modal-content">
-                                    <form method="POST">
+                                    <form method="POST" enctype="multipart/form-data">
                                         <input type="hidden" name="action_edit_lecon" value="1">
                                         <input type="hidden" name="line_id" value="<?= (int)$row['id'] ?>">
                                         <div class="modal-header bg-warning text-dark">
@@ -479,8 +550,6 @@ require_once __DIR__ . '/../layout/navbar.php';
                                                 <?php if ($isAnglais): ?>
                                                 <div class="col-md-4">
                                                     <label class="form-label small fw-semibold">Activités</label>
-                                                    <br><small class="text-danger">N.B: Activités, c'est pour les cours
-                                                        d'anglais</small>
                                                     <input type="text" name="activites"
                                                         class="form-control form-control-sm"
                                                         value="<?= e($row['activites'] ?? '') ?>">
@@ -497,6 +566,15 @@ require_once __DIR__ . '/../layout/navbar.php';
                                                     <input type="text" name="observation"
                                                         class="form-control form-control-sm"
                                                         value="<?= e($row['observation'] ?? '') ?>">
+                                                </div>
+                                                <div class="col-md-12">
+                                                    <label class="form-label small fw-semibold">Changer la pièce jointe
+                                                        (Optionnel)</label>
+                                                    <input type="file" name="edit_ligne_fichier_joint"
+                                                        class="form-control form-control-sm"
+                                                        accept=".pdf,.doc,.docx,.png,.jpg,.jpeg">
+                                                    <small class="text-muted">Laissez vide pour conserver la pièce
+                                                        jointe actuelle.</small>
                                                 </div>
                                             </div>
                                         </div>
@@ -522,7 +600,7 @@ require_once __DIR__ . '/../layout/navbar.php';
     <div class="modal fade" id="modalAddLecon" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
-                <form method="POST">
+                <form method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="action_add_lecon" value="1">
                     <div class="modal-header bg-dark text-white">
                         <h5 class="modal-title h6"><i class="bi bi-plus-circle me-1"></i> Ajouter une prévision</h5>
@@ -590,6 +668,12 @@ require_once __DIR__ . '/../layout/navbar.php';
                                 <input type="text" name="observation" class="form-control form-control-sm"
                                     placeholder="ex: En attente">
                             </div>
+                            <div class="col-md-12">
+                                <label class="form-label small fw-semibold">Joindre un document explicatif
+                                    (Optionnel)</label>
+                                <input type="file" name="ligne_fichier_joint" class="form-control form-control-sm"
+                                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg">
+                            </div>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -605,7 +689,7 @@ require_once __DIR__ . '/../layout/navbar.php';
     <div class="modal fade" id="modalCreateHead" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog">
             <div class="modal-content">
-                <form method="POST">
+                <form method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="action_create_head" value="1">
                     <div class="modal-header bg-primary text-white">
                         <h5 class="modal-title h6"><i class="bi bi-file-earmark-plus me-2"></i>Ouvrir ou Créer une fiche
@@ -639,6 +723,14 @@ require_once __DIR__ . '/../layout/navbar.php';
                             <input type="text" name="anneeScolaire" class="form-control" value="<?= e($anneeEnCours) ?>"
                                 readonly required>
                         </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Attacher la prévision complète (PDF, Word) <span
+                                    class="text-muted">(Optionnel)</span></label>
+                            <input type="file" name="fichier_joint" class="form-control" accept=".pdf,.doc,.docx">
+                            <small class="text-muted">Vous permet de joindre directement votre document rédigé sur Word
+                                ou PDF.</small>
+                        </div>
                         <?php endif; ?>
                     </div>
                     <div class="modal-footer">
@@ -660,7 +752,6 @@ require_once __DIR__ . '/../layout/navbar.php';
 <script>
 document.addEventListener('DOMContentLoaded', function() {
 
-    // 1. MASQUAGE/AFFICHAGE DU CHAMP ACTIVITÉS
     const selectCours = document.getElementById('selectTargetPrevision');
     const containerActivites = document.getElementById('containerActivites');
 
@@ -682,7 +773,6 @@ document.addEventListener('DOMContentLoaded', function() {
         checkActiviteVisibility();
     }
 
-    // 2. FILTRAGE EN TEMPS RÉEL (RECHERCHE)
     const searchInput = document.getElementById('searchInput');
     const tableBody = document.getElementById('tableBody');
 
@@ -699,7 +789,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// 3. TRI DES COLONNES DU TABLEAU
 let sortDirections = {};
 
 function sortTable(columnIndex) {
@@ -707,7 +796,6 @@ function sortTable(columnIndex) {
     const tbody = table.querySelector("tbody");
     const rows = Array.from(tbody.querySelectorAll("tr"));
 
-    // Inverser la direction du tri pour la colonne
     sortDirections[columnIndex] = !sortDirections[columnIndex];
     const isAscending = sortDirections[columnIndex];
 

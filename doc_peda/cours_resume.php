@@ -31,87 +31,35 @@ $msgError   = '';
 // -------------------------------------------------------------------------
 // 1) TRAITEMENT : AJOUTER UN CHAPITRE
 // -------------------------------------------------------------------------
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_chapitre'])) {
-    $titreChapitre = trim((string)($_POST['titre_chapitre'] ?? ''));
-    $coursId       = (int)($_POST['cours_id'] ?? 0);
-
-    if ($titreChapitre === '' || $coursId <= 0) {
-        $msgError = "Veuillez fournir un titre de chapitre et sélectionner un cours.";
-    } else {
-        $stmt = $con->prepare("INSERT INTO cours_chapitres (titre, cours_id, classe_id, prof_id) VALUES (?, ?, ?, ?)");
-        $stmt->bind_param('siii', $titreChapitre, $coursId, $classeId, $agentId);
-        if ($stmt->execute()) {
-            $msgSuccess = "Le chapitre a été créé avec succès.";
-        } else {
-            $msgError = "Erreur lors de la création du chapitre.";
-        }
-        $stmt->close();
-    }
-}
-
-// -------------------------------------------------------------------------
-// 2) TRAITEMENT : SUPPRIMER UN CHAPITRE (ET SES LEÇONS)
-// -------------------------------------------------------------------------
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_delete_chapitre'])) {
-    $idChapDelete = (int)($_POST['id_chapitre'] ?? 0);
-
-    // Vérification de sécurité
-    $stmtCheck = $con->prepare("SELECT id FROM cours_chapitres WHERE id = ? AND prof_id = ?");
-    $stmtCheck->bind_param('ii', $idChapDelete, $agentId);
-    $stmtCheck->execute();
-    if ($stmtCheck->get_result()->num_rows > 0) {
-        // Supprimer physiquement les fichiers des leçons de ce chapitre
-        $stmtFiles = $con->prepare("SELECT fichier FROM cours_lecons WHERE chapitre_id = ?");
-        $stmtFiles->bind_param('i', $idChapDelete);
-        $stmtFiles->execute();
-        $resFiles = $stmtFiles->get_result();
-        while ($f = $resFiles->fetch_assoc()) {
-            @unlink($uploadDir . $f['fichier']);
-        }
-        $stmtFiles->close();
-
-        // Les leçons sont supprimées via ON DELETE CASCADE (ou manuellement ici pour plus de sécurité)
-        $con->query("DELETE FROM cours_lecons WHERE chapitre_id = $idChapDelete");
-        $con->query("DELETE FROM cours_chapitres WHERE id = $idChapDelete");
-
-        $msgSuccess = "Chapitre et toutes ses leçons supprimés.";
-    } else {
-        $msgError = "Chapitre introuvable ou accès refusé.";
-    }
-    $stmtCheck->close();
-}
-
-// -------------------------------------------------------------------------
-// 3) TRAITEMENT : AJOUTER UNE LEÇON (UPLOAD FICHIER)
-// -------------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_lecon'])) {
-    $titreLecon = trim((string)($_POST['titre_lecon'] ?? ''));
-    $chapitreId = (int)($_POST['chapitre_id'] ?? 0);
-    $desc       = trim((string)($_POST['description'] ?? ''));
+    $titreLecon  = trim((string)($_POST['titre_lecon'] ?? ''));
+    $chapitreId  = (int)($_POST['chapitre_id'] ?? 0);
+    $desc        = trim((string)($_POST['description'] ?? ''));
+    $formatType  = $_POST['format_type'] ?? 'texte';
+    $contenuText = trim((string)($_POST['contenu_resume'] ?? ''));
 
-    // Vérifier que le chapitre appartient bien au prof
     $checkChap = $con->query("SELECT id FROM cours_chapitres WHERE id = $chapitreId AND prof_id = $agentId")->num_rows;
+    $hasFile   = isset($_FILES['fichier']) && $_FILES['fichier']['error'] === UPLOAD_ERR_OK;
 
     if ($titreLecon === '' || $chapitreId <= 0) {
         $msgError = "Veuillez indiquer un titre et sélectionner un chapitre.";
     } elseif ($checkChap === 0) {
         $msgError = "Chapitre invalide.";
-    } elseif (!isset($_FILES['fichier']) || $_FILES['fichier']['error'] !== UPLOAD_ERR_OK) {
-        $msgError = "Veuillez sélectionner un fichier valide pour la leçon.";
+    } elseif (($formatType === 'texte' || $formatType === 'mixte') && empty($contenuText)) {
+        $msgError = "Veuillez saisir le texte du résumé.";
+    } elseif (($formatType === 'fichier' || $formatType === 'mixte') && !$hasFile) {
+        $msgError = "Veuillez sélectionner un fichier à envoyer.";
     } else {
-        $file     = $_FILES['fichier'];
-        $tmpName  = $file['tmp_name'];
-        $origName = $file['name'];
-        $fileSize = $file['size'];
-        $extension = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+        $newFilename = null;
+        $typeFormat  = 'texte';
 
-        $maxSizeBytes = 100 * 1024 * 1024; // 100 Mo
-        if ($fileSize > $maxSizeBytes) {
-            $msgError = "Le fichier est trop volumineux (Taille max : 100 Mo).";
-        } else {
+        if ($hasFile) {
+            $file      = $_FILES['fichier'];
+            $extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
             $allowedPdf   = ['pdf'];
-            $allowedAudio = ['mp3', 'wav', 'ogg', 'm4a', 'aac'];
-            $allowedVideo = ['mp4', 'webm', 'mkv', 'avi', 'mov'];
+            $allowedAudio = ['mp3', 'wav', 'ogg', 'm4a'];
+            $allowedVideo = ['mp4', 'webm', 'mkv', 'avi'];
             $allowedDocs  = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'zip', 'rar'];
             $allowedExtensions = array_merge($allowedPdf, $allowedAudio, $allowedVideo, $allowedDocs);
 
@@ -126,24 +74,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_lecon'])) 
                 if (!is_dir($uploadDir)) mkdir($uploadDir, 0777, true);
 
                 $newFilename = 'lecon_' . uniqid() . '.' . $extension;
-                $destination = $uploadDir . $newFilename;
-
-                if (move_uploaded_file($tmpName, $destination)) {
-                    $stmt = $con->prepare("
-                        INSERT INTO cours_lecons (chapitre_id, titre, description, fichier, type_format)
-                        VALUES (?, ?, ?, ?, ?)
-                    ");
-                    $stmt->bind_param('issss', $chapitreId, $titreLecon, $desc, $newFilename, $typeFormat);
-                    if ($stmt->execute()) {
-                        $msgSuccess = "La leçon a été ajoutée avec succès !";
-                    } else {
-                        $msgError = "Erreur BDD lors de l'enregistrement de la leçon.";
-                    }
-                    $stmt->close();
-                } else {
-                    $msgError = "Erreur lors de la sauvegarde du fichier sur le serveur.";
+                if (!move_uploaded_file($file['tmp_name'], $uploadDir . $newFilename)) {
+                    $msgError = "Erreur lors de la sauvegarde du fichier.";
+                    $newFilename = null;
                 }
             }
+        }
+
+        if (empty($msgError)) {
+            $stmt = $con->prepare("
+                INSERT INTO cours_lecons (chapitre_id, titre, description, contenu, fichier, type_format)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->bind_param('isssss', $chapitreId, $titreLecon, $desc, $contenuText, $newFilename, $typeFormat);
+            if ($stmt->execute()) {
+                $msgSuccess = "La leçon a été ajoutée avec succès !";
+            } else {
+                $msgError = "Erreur BDD lors de l'enregistrement de la leçon.";
+            }
+            $stmt->close();
         }
     }
 }
@@ -154,7 +103,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_lecon'])) 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_delete_lecon'])) {
     $idLeconDelete = (int)($_POST['id_lecon'] ?? 0);
 
-    // Vérifier que la leçon appartient bien à un chapitre du prof
     $stmtCheck = $con->prepare("
         SELECT l.fichier 
         FROM cours_lecons l
@@ -167,7 +115,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_delete_lecon']
     $stmtCheck->close();
 
     if ($resCheck) {
-        @unlink($uploadDir . $resCheck['fichier']);
+        if (!empty($resCheck['fichier'])) {
+            @unlink($uploadDir . $resCheck['fichier']);
+        }
         $con->query("DELETE FROM cours_lecons WHERE id = $idLeconDelete");
         $msgSuccess = "La leçon a été supprimée.";
     } else {
@@ -176,10 +126,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_delete_lecon']
 }
 
 // -------------------------------------------------------------------------
-// CHARGEMENT DES DONNÉES POUR L'AFFICHAGE
+// CHARGEMENT DES DONNÉES
 // -------------------------------------------------------------------------
-
-// 1. Les Cours (Branches)
 $coursList = [];
 $stmt = $con->prepare("
     SELECT DISTINCT co.id, co.intitule
@@ -193,11 +141,10 @@ $stmt->execute();
 $resCours = $stmt->get_result();
 while ($row = $resCours->fetch_assoc()) {
     $coursList[$row['id']] = $row;
-    $coursList[$row['id']]['chapitres'] = []; // Initialisation
+    $coursList[$row['id']]['chapitres'] = [];
 }
 $stmt->close();
 
-// 2. Les Chapitres & Leçons
 $stmt = $con->prepare("
     SELECT ch.*, co.intitule AS cours_nom 
     FROM cours_chapitres ch 
@@ -209,20 +156,18 @@ $stmt->bind_param('ii', $agentId, $classeId);
 $stmt->execute();
 $resChap = $stmt->get_result();
 
-$allChapitresFlat = []; // Pour le select du modal "Ajouter Leçon"
+$allChapitresFlat = [];
 
 while ($chap = $resChap->fetch_assoc()) {
     $chap['lecons'] = [];
     $allChapitresFlat[] = $chap;
     
-    // Attacher le chapitre à son cours s'il existe dans le tableau
     if (isset($coursList[$chap['cours_id']])) {
         $coursList[$chap['cours_id']]['chapitres'][$chap['id']] = $chap;
     }
 }
 $stmt->close();
 
-// 3. Charger les leçons et les intégrer aux chapitres
 $stmt = $con->prepare("
     SELECT l.*, ch.cours_id 
     FROM cours_lecons l
@@ -248,15 +193,14 @@ include __DIR__.'/../layout/navbar.php';
 
 <div class="container mt-3 mb-5">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h4 mb-0">📚 Gestion des Cours & Leçons</h1>
+        <h1 class="h4 mb-0">📚 Gestion des Cours & Résumés</h1>
         <div>
-            <!-- Boutons pour ouvrir les modales -->
             <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#modalAddChapitre">
                 ➕ Nouveau Chapitre
             </button>
             <?php if (!empty($allChapitresFlat)): ?>
             <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalAddLecon">
-                📤 Ajouter une Leçon
+                ✍️ Publier un Résumé / Fichier
             </button>
             <?php endif; ?>
         </div>
@@ -279,7 +223,6 @@ include __DIR__.'/../layout/navbar.php';
     <div class="alert alert-warning">Aucun cours ne vous est attribué pour cette classe.</div>
     <?php else: ?>
 
-    <!-- Affichage de l'arborescence (Cours > Chapitres > Leçons) -->
     <div class="accordion" id="accordionCours">
         <?php foreach ($coursList as $cours): ?>
         <div class="accordion-item mb-3 border">
@@ -301,67 +244,82 @@ include __DIR__.'/../layout/navbar.php';
                         <?php foreach ($cours['chapitres'] as $chap): ?>
                         <div class="col-12 mb-4">
                             <div class="card border-primary shadow-sm">
-                                <div
-                                    class="card-header bg-white border-primary d-flex justify-content-between align-items-center">
+                                <div class="card-header bg-white border-primary d-flex justify-content-between align-items-center">
                                     <h5 class="mb-0 text-primary">📖 <?= e($chap['titre']) ?></h5>
-                                    <form method="post"
-                                        onsubmit="return confirm('Supprimer ce chapitre entraînera la suppression de toutes ses leçons. Continuer ?');">
+                                    <form method="post" onsubmit="return confirm('Supprimer ce chapitre entraînera la suppression de toutes ses leçons. Continuer ?');">
                                         <input type="hidden" name="action_delete_chapitre" value="1">
                                         <input type="hidden" name="id_chapitre" value="<?= (int)$chap['id'] ?>">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger"
-                                            title="Supprimer le chapitre">🗑️ Chapitre</button>
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Supprimer le chapitre">🗑️ Chapitre</button>
                                     </form>
                                 </div>
                                 <div class="card-body bg-light p-3">
                                     <?php if (empty($chap['lecons'])): ?>
-                                    <div class="text-muted small">Aucune leçon dans ce chapitre.</div>
+                                    <div class="text-muted small">Aucun résumé ni leçon dans ce chapitre.</div>
                                     <?php else: ?>
-                                    <ul class="list-group list-group-flush">
-                                        <?php foreach ($chap['lecons'] as $lec): ?>
+                                    <div class="accordion" id="accordionLecons<?= $chap['id'] ?>">
+                                        <?php foreach ($chap['lecons'] as $index => $lec): ?>
                                         <?php 
-                                                                    $fileUrl = '/uploads/cours_lecons/' . e($lec['fichier']);
-                                                                    $icon = '📁';
-                                                                    if ($lec['type_format'] === 'pdf') $icon = '📄';
-                                                                    if ($lec['type_format'] === 'video') $icon = '🎥';
-                                                                    if ($lec['type_format'] === 'audio') $icon = '🎙️';
-                                                                ?>
-                                        <li
-                                            class="list-group-item d-flex justify-content-between align-items-center bg-transparent px-0 border-bottom">
-                                            <div class="me-auto">
-                                                <span class="fs-5 me-2"><?= $icon ?></span>
-                                                <span class="fw-bold"><?= e($lec['titre']) ?></span>
-                                                <?php if (!empty($lec['description'])): ?>
-                                                <br><small
-                                                    class="text-muted ms-4"><?= nl2br(e($lec['description'])) ?></small>
-                                                <?php endif; ?>
-                                            </div>
+                                            $fileUrl = !empty($lec['fichier']) ? '/uploads/cours_lecons/' . e($lec['fichier']) : null;
+                                            $icon = '📝';
+                                            if ($lec['type_format'] === 'pdf') $icon = '📄';
+                                            if ($lec['type_format'] === 'video') $icon = '🎥';
+                                            if ($lec['type_format'] === 'audio') $icon = '🎙️';
+                                            if ($lec['type_format'] === 'document') $icon = '📁';
+                                        ?>
+                                        <div class="accordion-item mb-2 border-0 shadow-sm">
+                                            <h2 class="accordion-header" id="headingLec<?= $lec['id'] ?>">
+                                                <button class="accordion-button collapsed bg-white text-dark fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLec<?= $lec['id'] ?>">
+                                                    <span class="me-2"><?= $icon ?></span>
+                                                    <span><?= e($lec['titre']) ?></span>
+                                                </button>
+                                            </h2>
+                                            <div id="collapseLec<?= $lec['id'] ?>" class="accordion-collapse collapse" data-bs-parent="#accordionLecons<?= $chap['id'] ?>">
+                                                <div class="accordion-body bg-white border-top">
+                                                    
+                                                    <?php if (!empty($lec['description'])): ?>
+                                                    <p class="text-muted small mb-3"><strong>Consignes :</strong> <?= nl2br(e($lec['description'])) ?></p>
+                                                    <?php endif; ?>
 
-                                            <div class="d-flex align-items-center gap-2">
-                                                <!-- Lecteur -->
-                                                <?php if ($lec['type_format'] === 'audio'): ?>
-                                                <audio controls style="height: 30px; max-width: 180px;">
-                                                    <source src="<?= $fileUrl ?>">
-                                                </audio>
-                                                <?php elseif ($lec['type_format'] === 'video'): ?>
-                                                <a href="<?= $fileUrl ?>" target="_blank"
-                                                    class="btn btn-sm btn-primary">▶️ Regarder</a>
-                                                <?php else: ?>
-                                                <a href="<?= $fileUrl ?>" target="_blank"
-                                                    class="btn btn-sm btn-secondary">⬇️ Ouvrir</a>
-                                                <?php endif; ?>
+                                                    <!-- AFFICHAGE DU RÉSUMÉ TEXTE S'IL EXISTE -->
+                                                    <?php if (!empty($lec['contenu'])): ?>
+                                                    <div class="card bg-light border-0 p-3 mb-3">
+                                                        <h6 class="fw-bold text-primary mb-2">📌 Résumé du cours :</h6>
+                                                        <div class="content-body">
+                                                            <?= nl2br(e($lec['contenu'])) ?>
+                                                        </div>
+                                                    </div>
+                                                    <?php endif; ?>
 
-                                                <!-- Suppression Leçon -->
-                                                <form method="post"
-                                                    onsubmit="return confirm('Supprimer cette leçon ?');">
-                                                    <input type="hidden" name="action_delete_lecon" value="1">
-                                                    <input type="hidden" name="id_lecon" value="<?= (int)$lec['id'] ?>">
-                                                    <button type="submit" class="btn btn-sm btn-outline-danger"
-                                                        title="Supprimer leçon">❌</button>
-                                                </form>
+                                                    <!-- FICHIER ATTACHÉ (OPTIONNEL) -->
+                                                    <div class="d-flex align-items-center justify-content-between mt-3 pt-2 border-top">
+                                                        <div>
+                                                            <?php if ($fileUrl): ?>
+                                                                <?php if ($lec['type_format'] === 'audio'): ?>
+                                                                    <audio controls style="height: 35px;">
+                                                                        <source src="<?= $fileUrl ?>">
+                                                                    </audio>
+                                                                <?php elseif ($lec['type_format'] === 'video'): ?>
+                                                                    <a href="<?= $fileUrl ?>" target="_blank" class="btn btn-sm btn-primary">▶️ Regarder la vidéo</a>
+                                                                <?php else: ?>
+                                                                    <a href="<?= $fileUrl ?>" target="_blank" class="btn btn-sm btn-outline-primary">📎 Télécharger le support (<?= strtoupper(pathinfo($lec['fichier'], PATHINFO_EXTENSION)) ?>)</a>
+                                                                <?php endif; ?>
+                                                            <?php else: ?>
+                                                                <span class="badge bg-secondary">Aucun fichier attaché</span>
+                                                            <?php endif; ?>
+                                                        </div>
+
+                                                        <form method="post" onsubmit="return confirm('Supprimer ce résumé / leçon ?');">
+                                                            <input type="hidden" name="action_delete_lecon" value="1">
+                                                            <input type="hidden" name="id_lecon" value="<?= (int)$lec['id'] ?>">
+                                                            <button type="submit" class="btn btn-sm btn-danger">🗑️ Supprimer</button>
+                                                        </form>
+                                                    </div>
+
+                                                </div>
                                             </div>
-                                        </li>
+                                        </div>
                                         <?php endforeach; ?>
-                                    </ul>
+                                    </div>
                                     <?php endif; ?>
                                 </div>
                             </div>
@@ -402,8 +360,7 @@ include __DIR__.'/../layout/navbar.php';
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-bold">Titre du chapitre</label>
-                        <input type="text" name="titre_chapitre" class="form-control"
-                            placeholder="Ex: Chapitre 1 - Introduction" required>
+                        <input type="text" name="titre_chapitre" class="form-control" placeholder="Ex: Chapitre 1 - Introduction" required>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -415,24 +372,26 @@ include __DIR__.'/../layout/navbar.php';
     </div>
 </div>
 
-<!-- Modal Ajouter Leçon -->
+<!-- Modal Publier Résumé / Leçon -->
+<!-- Modal Publier Résumé / Leçon -->
 <div class="modal fade" id="modalAddLecon" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <form method="post" enctype="multipart/form-data">
                 <input type="hidden" name="action_add_lecon" value="1">
                 <div class="modal-header bg-success text-white">
-                    <h5 class="modal-title">Publier une nouvelle Leçon (Fichier)</h5>
+                    <h5 class="modal-title">✍️ Publier un Support de Cours</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
                     <div class="row g-3">
+                        
+                        <!-- 1. Sélection Chapitre & Titre -->
                         <div class="col-md-6">
-                            <label class="form-label fw-bold">Rattacher à un Chapitre</label>
+                            <label class="form-label fw-bold">Chapitre <span class="text-danger">*</span></label>
                             <select name="chapitre_id" class="form-select" required>
                                 <option value="">-- Choisir le chapitre --</option>
                                 <?php 
-                                // On groupe les chapitres par cours dans le select
                                 $currentCours = '';
                                 foreach ($allChapitresFlat as $chapSelect): 
                                     if ($currentCours !== $chapSelect['cours_nom']): 
@@ -447,33 +406,110 @@ include __DIR__.'/../layout/navbar.php';
                                 ?>
                             </select>
                         </div>
+                        
                         <div class="col-md-6">
-                            <label class="form-label fw-bold">Titre de la leçon</label>
-                            <input type="text" name="titre_lecon" class="form-control"
-                                placeholder="Ex: Leçon 1 - Les bases" required>
+                            <label class="form-label fw-bold">Titre du cours / sujet <span class="text-danger">*</span></label>
+                            <input type="text" name="titre_lecon" class="form-control" placeholder="Ex: Leçon 1 - Structure de l'atome" required>
+                        </div>
+
+                        <!-- 2. CHOIX DU FORMAT (Radio buttons) -->
+                        <div class="col-12">
+                            <label class="form-label fw-bold text-primary">Quel type de contenu souhaitez-vous ajouter ? <span class="text-danger">*</span></label>
+                            <div class="d-flex gap-4 p-3 bg-light rounded border">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="format_type" id="formatTexte" value="texte" checked>
+                                    <label class="form-check-label fw-bold" for="formatTexte">
+                                        📝 Saisir un résumé (Texte)
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="format_type" id="formatFichier" value="fichier">
+                                    <label class="form-check-label fw-bold" for="formatFichier">
+                                        📎 Joindre un fichier (PDF, MP4, MP3, Doc...)
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="format_type" id="formatMixte" value="mixte">
+                                    <label class="form-check-label fw-bold" for="formatMixte">
+                                        📑 Résumé + Fichier joint
+                                    </label>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="col-12">
-                            <label class="form-label fw-bold">Consignes / Description</label>
-                            <textarea name="description" class="form-control" rows="2"
-                                placeholder="Que doivent faire les élèves ?"></textarea>
+                            <label class="form-label fw-bold">Consignes / Objectifs (Optionnel)</label>
+                            <input type="text" name="description" class="form-control" placeholder="Ex: À lire avant la séance de travaux pratiques.">
                         </div>
 
-                        <div class="col-12">
-                            <label class="form-label fw-bold">Fichier de la leçon (Vidéo, Audio, PDF...)</label>
-                            <input type="file" name="fichier" class="form-control" required>
-                            <small class="text-muted d-block mt-1">Formats : MP4, WEBM, MP3, PDF, DOCX, PPTX... (Max 100
-                                Mo)</small>
+                        <!-- 3. ZONE RÉSUMÉ TEXTE (Affichée par défaut) -->
+                        <div class="col-12" id="block_texte">
+                            <label class="form-label fw-bold text-success">📝 Contenu du résumé / Rédaction du cours</label>
+                            <textarea name="contenu_resume" id="input_contenu" class="form-control" rows="6" placeholder="Rédigez directement votre leçon ou résumé ici..."></textarea>
                         </div>
+
+                        <!-- 4. ZONE FICHIER (Masquée par défaut) -->
+                        <div class="col-12 d-none" id="block_fichier">
+                            <label class="form-label fw-bold text-primary">📎 Document ou média attaché</label>
+                            <input type="file" name="fichier" id="input_fichier" class="form-control">
+                            <small class="text-muted d-block mt-1">Formats acceptés : PDF, Word, Excel, MP4, MP3... (Max 100 Mo)</small>
+                        </div>
+
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="submit" class="btn btn-success">Upload la Leçon</button>
+                    <button type="submit" class="btn btn-success">Enregistrer & Publier</button>
                 </div>
             </form>
         </div>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const radioTexte = document.getElementById('formatTexte');
+    const radioFichier = document.getElementById('formatFichier');
+    const radioMixte = document.getElementById('formatMixte');
+
+    const blockTexte = document.getElementById('block_texte');
+    const blockFichier = document.getElementById('block_fichier');
+
+    const inputContenu = document.getElementById('input_contenu');
+    const inputFichier = document.getElementById('input_fichier');
+
+    function updateFormDisplay() {
+        if (radioTexte.checked) {
+            blockTexte.classList.remove('d-none');
+            blockFichier.classList.add('d-none');
+            
+            inputContenu.setAttribute('required', 'required');
+            inputFichier.removeAttribute('required');
+            inputFichier.value = ''; // Réinitialiser le fichier
+        } else if (radioFichier.checked) {
+            blockTexte.classList.add('d-none');
+            blockFichier.classList.remove('d-none');
+            
+            inputFichier.setAttribute('required', 'required');
+            inputContenu.removeAttribute('required');
+            inputContenu.value = ''; // Réinitialiser le texte
+        } else if (radioMixte.checked) {
+            blockTexte.classList.remove('d-none');
+            blockFichier.classList.remove('d-none');
+            
+            inputContenu.setAttribute('required', 'required');
+            inputFichier.setAttribute('required', 'required');
+        }
+    }
+
+    // Écouter les changements sur les radios
+    radioTexte.addEventListener('change', updateFormDisplay);
+    radioFichier.addEventListener('change', updateFormDisplay);
+    radioMixte.addEventListener('change', updateFormDisplay);
+
+    // Initialiser au chargement
+    updateFormDisplay();
+});
+</script>
 
 <?php include __DIR__.'/../layout/footer.php'; ?>
