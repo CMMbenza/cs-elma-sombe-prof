@@ -203,6 +203,7 @@ $userFullName = trim(($prof['nom'] ?? '') . ' ' . ($prof['postnom'] ?? '') . ' '
                 <?php elseif ($classeMeta): ?>
                 <span class="badge rounded-pill text-bg-primary py-2 px-3">
                     <?= e($classeMeta['description']) ?>
+                    <?= e($classeMeta['cycle_desc']) ?>
                 </span>
                 <?php endif; ?>
 

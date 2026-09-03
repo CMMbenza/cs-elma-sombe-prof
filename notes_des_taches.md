@@ -280,3 +280,22 @@ ALTER TABLE `prevision_detail` ADD `activites` VARCHAR(20) NOT NULL AFTER `obser
 ALTER TABLE cours_lecons MODIFY fichier VARCHAR(255) NULL;
 ALTER TABLE cours_lecons ADD COLUMN contenu LONGTEXT NULL AFTER description;
 ALTER TABLE prevision_matiere ADD COLUMN fichier_joint VARCHAR(255) NULL AFTER anneeScolaire;
+
+#02.09.2026
+
+CREATE TABLE IF NOT EXISTS `resume_cours` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `journal_id` INT NOT NULL,
+  `fiche_no` VARCHAR(50) DEFAULT NULL,
+  `domaine` VARCHAR(255) DEFAULT NULL,
+  `discipline` VARCHAR(255) DEFAULT NULL,
+  `titre_lecon` VARCHAR(255) DEFAULT NULL,
+  `type_lecon` VARCHAR(100) DEFAULT NULL,
+  `competence_attendue` TEXT DEFAULT NULL,
+  `resume_texte` TEXT DEFAULT NULL,
+  `devoir` TEXT DEFAULT NULL,
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (`journal_id`) REFERENCES `journal_classe`(`id`) ON DELETE CASCADE
+);
+ALTER TABLE `resume_cours` ADD COLUMN `piece_jointe` VARCHAR(255) DEFAULT NULL AFTER `devoir`;
