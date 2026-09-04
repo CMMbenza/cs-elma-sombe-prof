@@ -13,7 +13,15 @@
         </div>
     </div>
 </footer>
-
+    <script>
+    // Maintient la session active en envoyant un signal discret toutes les 5 minutes (300 000 ms)
+    setInterval(() => {
+        fetch(window.location.href, {
+            method: 'HEAD'
+        });
+    }, 300000);
+    </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
+
 </html>

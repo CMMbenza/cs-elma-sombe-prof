@@ -280,7 +280,7 @@ require_once __DIR__ . '/../layout/navbar.php';
                     </div>
 
                     <div class="col-md-12">
-                        <label class="form-label fw-bold mb-0">Objectif spécifique :</label>
+                        <label class="form-label fw-bold mb-0">Objectif spécifique (Competènces) :</label>
                         <input type="text" name="objectif_specifique" class="form-control form-control-sm"
                             value="<?= e($fiche['objectif_specifique'] ?? '') ?>"
                             placeholder="But poursuivi par l'enseignant">
@@ -292,7 +292,7 @@ require_once __DIR__ . '/../layout/navbar.php';
                     </div>
 
                     <div class="col-md-6">
-                        <label class="form-label fw-bold mb-0">Stratégies :</label>
+                        <label class="form-label fw-bold mb-0">Stratégies (Méthode ou Exemple des situations):</label>
                         <input type="text" name="strategies" class="form-control form-control-sm"
                             value="<?= e($fiche['strategies'] ?? '') ?>" placeholder="Ex: Méthode participative">
                     </div>
@@ -317,9 +317,9 @@ require_once __DIR__ . '/../layout/navbar.php';
                         <thead class="table-dark text-center small text-uppercase">
                             <tr>
                                 <th style="width: 15%;">Étapes</th>
-                                <th style="width: 35%;">Ce que fait l'enseignant</th>
-                                <th style="width: 25%;">Ce que fait l'élève</th>
-                                <th style="width: 15%;">Stratégie</th>
+                                <th style="width: 35%;">Ce que fait l'enseignant (Activité du guide)</th>
+                                <th style="width: 25%;">Ce que fait l'élève (Activité de l'apprenant)</th>
+                                <th style="width: 15%;">Stratégie (Méthode)</th>
                                 <th style="width: 10%;">Durée</th>
                             </tr>
                         </thead>
