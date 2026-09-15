@@ -26,17 +26,18 @@ $answers    = []; // [question_id] => ['reponse_text'=>..., 'points_obtenus'=>..
 $qids       = [];
 $files      = []; // pièces jointes pour PJ ou autres formats
 
-// 1) Charger la soumission + quiz + élève, et vérifier autorisation du prof
+// 1) Charger la soumission + quiz + élève, et vérifier autorisation du prof via quiz_classe
 $sql = "
   SELECT
     s.id AS submission_id, s.quiz_id, s.eleve_id, s.statut, s.note_totale, s.date_submitted,
-    q.titre, q.format, q.type_quiz, q.classe_id,
+    q.titre, q.format, q.type_quiz, qc.classe_id,
     e.nom, e.postnom, e.prenom
   FROM quiz_submission s
   JOIN quiz q ON q.id = s.quiz_id
+  JOIN quiz_classe qc ON qc.quiz_id = q.id
   JOIN eleve e ON e.id = s.eleve_id
   WHERE s.id = ?
-    AND q.classe_id IN (
+    AND qc.classe_id IN (
         SELECT classe_id 
         FROM affectation_prof_classe 
         WHERE agent_id = ?
@@ -232,22 +233,22 @@ include __DIR__ . '/layout/header.php';
 include __DIR__ . '/layout/navbar.php';
 ?>
 <div class="container">
-  <div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
-    <h1 class="h5 mb-0">Correction — <?= isset($submission['format']) ? e($submission['format']) : '' ?></h1>
-    <?php if ($submission): ?>
-      <div>
-        <a class="btn btn-outline-secondary btn-sm"
-           href="/prof/quiz_submissions.php?quiz_id=<?= (int)$submission['quiz_id'] ?>">
-          &larr; Retour aux soumissions
-        </a>
-      </div>
-    <?php endif; ?>
-  </div>
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
+        <h1 class="h5 mb-0">Correction — <?= isset($submission['format']) ? e($submission['format']) : '' ?></h1>
+        <?php if ($submission): ?>
+        <div>
+            <a class="btn btn-outline-secondary btn-sm"
+                href="/prof/quiz_submissions.php?quiz_id=<?= (int)$submission['quiz_id'] ?>">
+                &larr; Retour aux soumissions
+            </a>
+        </div>
+        <?php endif; ?>
+    </div>
 
-  <?php if ($error): ?><div class="alert alert-danger"><?= e($error) ?></div><?php endif; ?>
-  <?php if ($ok):    ?><div class="alert alert-success"><?= e($ok) ?></div><?php endif; ?>
+    <?php if ($error): ?><div class="alert alert-danger"><?= e($error) ?></div><?php endif; ?>
+    <?php if ($ok):    ?><div class="alert alert-success"><?= e($ok) ?></div><?php endif; ?>
 
-  <?php if ($submission && !$error): ?>
+    <?php if ($submission && !$error): ?>
     <?php
       $nomComplet = trim(
         ($submission['nom'] ?? '') . ' ' .
@@ -256,123 +257,110 @@ include __DIR__ . '/layout/navbar.php';
       );
     ?>
     <div class="card card-soft mb-3">
-      <div class="card-body">
-        <div class="row g-2">
-          <div class="col-md-4">
-            <div class="small text-muted">Élève</div>
-            <div class="fw-semibold"><?= e($nomComplet) ?></div>
-          </div>
-          <div class="col-md-4">
-            <div class="small text-muted">Quiz</div>
-            <div class="fw-semibold"><?= e($submission['titre'] ?? '') ?></div>
-          </div>
-          <div class="col-md-2">
-            <div class="small text-muted">Statut</div>
-            <div class="fw-semibold"><?= e($submission['statut'] ?? '') ?></div>
-          </div>
-          <div class="col-md-2">
-            <div class="small text-muted">Note totale</div>
-            <div class="fw-semibold">
-              <?= $submission['note_totale'] !== null
+        <div class="card-body">
+            <div class="row g-2">
+                <div class="col-md-4">
+                    <div class="small text-muted">Élève</div>
+                    <div class="fw-semibold"><?= e($nomComplet) ?></div>
+                </div>
+                <div class="col-md-4">
+                    <div class="small text-muted">Quiz</div>
+                    <div class="fw-semibold"><?= e($submission['titre'] ?? '') ?></div>
+                </div>
+                <div class="col-md-2">
+                    <div class="small text-muted">Statut</div>
+                    <div class="fw-semibold"><?= e($submission['statut'] ?? '') ?></div>
+                </div>
+                <div class="col-md-2">
+                    <div class="small text-muted">Note totale</div>
+                    <div class="fw-semibold">
+                        <?= $submission['note_totale'] !== null
                     ? e(number_format((float)$submission['note_totale'], 2, ',', ' '))
                     : '—' ?>
+                    </div>
+                </div>
             </div>
-          </div>
-        </div>
 
-        <?php if ($files): ?>
-          <hr>
-          <div class="small text-muted mb-1">Pièces jointes :</div>
-          <ul class="mb-0">
-            <?php foreach ($files as $f): ?>
-              <li>
-                <a href="<?= e($f['file_path']) ?>" target="_blank" rel="noopener">
-                  <?= e($f['original_name']) ?>
-                </a>
-                <span class="text-muted small">
-                  (<?= e($f['mime_type']) ?>, <?= (int)$f['file_size'] ?> o)
-                </span>
-              </li>
-            <?php endforeach; ?>
-          </ul>
-        <?php endif; ?>
-      </div>
+            <?php if ($files): ?>
+            <hr>
+            <div class="small text-muted mb-1">Pièces jointes :</div>
+            <ul class="mb-0">
+                <?php foreach ($files as $f): ?>
+                <li>
+                    <a href="<?= e($f['file_path']) ?>" target="_blank" rel="noopener">
+                        <?= e($f['original_name']) ?>
+                    </a>
+                    <span class="text-muted small">
+                        (<?= e($f['mime_type']) ?>, <?= (int)$f['file_size'] ?> o)
+                    </span>
+                </li>
+                <?php endforeach; ?>
+            </ul>
+            <?php endif; ?>
+        </div>
     </div>
 
     <form method="post" class="card card-soft">
-      <div class="card-body">
-        <?php if ($submission['format'] === 'RQ'): ?>
+        <div class="card-body">
+            <?php if ($submission['format'] === 'RQ'): ?>
 
-          <?php if (!$questions): ?>
+            <?php if (!$questions): ?>
             <div class="alert alert-warning mb-0">Aucune question RQ trouvée pour ce quiz.</div>
-          <?php else: ?>
+            <?php else: ?>
             <ol class="mb-0">
-              <?php foreach ($questions as $q):
+                <?php foreach ($questions as $q):
                 $qid = (int)$q['id'];
                 $rep = $answers[$qid]['reponse_text']   ?? '';
                 $pts = $answers[$qid]['points_obtenus'] ?? '';
               ?>
                 <li class="mb-3">
-                  <div class="mb-1">
-                    <strong>Question :</strong> <?= nl2br(e($q['question_text'])) ?>
-                    <span class="text-muted small"> — Max : <?= e((string)$q['points']) ?> pts</span>
-                  </div>
-                  <div class="mb-2">
-                    <div class="small text-muted">Réponse élève :</div>
-                    <div class="border rounded p-2 bg-light" style="white-space:pre-wrap;">
-                      <?= $rep !== '' ? nl2br(e($rep)) : '<em>Aucune réponse saisie.</em>' ?>
+                    <div class="mb-1">
+                        <strong>Question :</strong> <?= nl2br(e($q['question_text'])) ?>
+                        <span class="text-muted small"> — Max : <?= e((string)$q['points']) ?> pts</span>
                     </div>
-                  </div>
-                  <div class="mb-2">
-                    <label class="form-label">Points obtenus</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="<?= e((string)$q['points']) ?>"
-                      name="pts_<?= $qid ?>"
-                      class="form-control form-control-sm"
-                      value="<?= e((string)$pts) ?>"
-                    >
-                  </div>
+                    <div class="mb-2">
+                        <div class="small text-muted">Réponse élève :</div>
+                        <div class="border rounded p-2 bg-light" style="white-space:pre-wrap;">
+                            <?= $rep !== '' ? nl2br(e($rep)) : '<em>Aucune réponse saisie.</em>' ?>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Points obtenus</label>
+                        <input type="number" step="0.01" min="0" max="<?= e((string)$q['points']) ?>"
+                            name="pts_<?= $qid ?>" class="form-control form-control-sm" value="<?= e((string)$pts) ?>">
+                    </div>
                 </li>
-              <?php endforeach; ?>
+                <?php endforeach; ?>
             </ol>
-          <?php endif; ?>
+            <?php endif; ?>
 
-        <?php elseif ($submission['format'] === 'PJ'): ?>
-          <div class="mb-3">
-            <p class="mb-1">
-              Ce devoir est au format <strong>Pièce jointe (PJ)</strong>.
-              Vous pouvez attribuer une <strong>note globale</strong> à partir de l'analyse des fichiers remis.
-            </p>
-          </div>
-          <div class="mb-2">
-            <label class="form-label">Note totale (sur 10, 20 ou votre barème)</label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              name="note_totale"
-              class="form-control"
-              value="<?= $submission['note_totale'] !== null ? e((string)$submission['note_totale']) : '' ?>"
-            >
-            <div class="form-text">
-              Vous pouvez décider du barème (ex: sur 10, sur 20) selon votre planification.
+            <?php elseif ($submission['format'] === 'PJ'): ?>
+            <div class="mb-3">
+                <p class="mb-1">
+                    Ce devoir est au format <strong>Pièce jointe (PJ)</strong>.
+                    Vous pouvez attribuer une <strong>note globale</strong> à partir de l'analyse des fichiers remis.
+                </p>
             </div>
-          </div>
-        <?php endif; ?>
-      </div>
+            <div class="mb-2">
+                <label class="form-label">Note totale (sur 10, 20 ou votre barème)</label>
+                <input type="number" step="0.01" min="0" name="note_totale" class="form-control"
+                    value="<?= $submission['note_totale'] !== null ? e((string)$submission['note_totale']) : '' ?>">
+                <div class="form-text">
+                    Vous pouvez décider du barème (ex: sur 10, sur 20) selon votre planification.
+                </div>
+            </div>
+            <?php endif; ?>
+        </div>
 
-      <div class="card-footer d-flex gap-2">
-        <button class="btn btn-success">Enregistrer la correction</button>
-        <a class="btn btn-outline-secondary"
-           href="/prof/quiz_submissions.php?quiz_id=<?= (int)$submission['quiz_id'] ?>">
-          Annuler
-        </a>
-      </div>
+        <div class="card-footer d-flex gap-2">
+            <button class="btn btn-success">Enregistrer la correction</button>
+            <a class="btn btn-outline-secondary"
+                href="/prof/quiz_submissions.php?quiz_id=<?= (int)$submission['quiz_id'] ?>">
+                Annuler
+            </a>
+        </div>
     </form>
-  <?php endif; ?>
+    <?php endif; ?>
 </div>
 
 <?php include __DIR__ . '/layout/footer.php'; ?>

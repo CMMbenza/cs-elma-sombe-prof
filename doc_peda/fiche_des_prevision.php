@@ -362,8 +362,9 @@ require_once __DIR__ . '/../layout/navbar.php';
                             <th class="sortable-header" onclick="sortTable(1)" style="width: 9%;">PÉRIODE ⇕</th>
                             <th class="sortable-header" onclick="sortTable(2)" style="width: 9%;">MOIS ⇕</th>
                             <th class="sortable-header" onclick="sortTable(3)" style="width: 10%;">SEMAINE ⇕</th>
-                            <th class="sortable-header" onclick="sortTable(4)" style="width: 11%;">BRANCHE ⇕</th>
-                            <th class="sortable-header" onclick="sortTable(5)" style="width: 11%;">SOUS-BRANCHE ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(4)" style="width: 11%;">BRANCHE/CAT... ⇕</th>
+                            <th class="sortable-header" onclick="sortTable(5)" style="width: 11%;">SOUS-BRANCHE/CAT... ⇕
+                            </th>
                             <th class="sortable-header" onclick="sortTable(6)">SAVOIRS ESSENTIELS ⇕</th>
                             <th class="sortable-header" onclick="sortTable(7)" style="width: 9%;">CODE / N° ⇕</th>
                             <th class="sortable-header" onclick="sortTable(8)" style="width: 9%;">OBS ⇕</th>

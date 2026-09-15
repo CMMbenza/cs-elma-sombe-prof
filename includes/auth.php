@@ -2,7 +2,25 @@
 // prof/includes/auth.php
 declare(strict_types=1);
 
-if (session_status() === PHP_SESSION_NONE) session_start();
+// --- CONFIGURATION DE LA SESSIONS ---
+// Durée de vie de la session : 12 heures (43200 secondes)
+$session_lifetime = 43200;
+
+ini_set('session.gc_maxlifetime', (string)$session_lifetime);
+ini_set('session.cookie_lifetime', (string)$session_lifetime);
+
+// Configuration des paramètres de cookies
+if (session_status() === PHP_SESSION_NONE) {
+    session_set_cookie_params([
+        'lifetime' => $session_lifetime,
+        'path'     => '/',
+        'domain'   => '',
+        'secure'   => isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on',
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
+    session_start();
+}
 
 require_once __DIR__.'/db.php';
 require_once __DIR__.'/helpers.php';

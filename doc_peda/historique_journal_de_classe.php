@@ -25,10 +25,11 @@ if (!$classeId) {
 }
 
 // -------------------------------------------------------------------------
-// 1) TRAITEMENT : MODIFICATION D'UNE ENTRÉE
+// 1) TRAITEMENT : MODIFICATION D'UNE ENTRÉE (DATE INCLUSE)
 // -------------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_edit'])) {
     $idEdit   = (int)($_POST['id_journal'] ?? 0);
+    $editDate = trim((string)($_POST['edit_jour_date'] ?? ''));
     $coursId  = (int)($_POST['edit_cours_id'] ?? 0);
     $matieres = trim((string)($_POST['edit_matieres'] ?? ''));
     $note     = trim((string)($_POST['edit_note'] ?? ''));
@@ -43,8 +44,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_edit'])) {
         $_SESSION['msg_error'] = "Fiche introuvable ou accès non autorisé.";
     } elseif ($resCheck['statut'] === 'valider') {
         $_SESSION['msg_error'] = "Impossible de modifier une fiche déjà validée.";
-    } elseif (empty($matieres) || $coursId <= 0) {
-        $_SESSION['msg_error'] = "Les champs Cours et Matière sont obligatoires.";
+    } elseif (empty($editDate) || empty($matieres) || $coursId <= 0) {
+        $_SESSION['msg_error'] = "La date, le cours et la matière sont obligatoires.";
     } else {
         $filename = $resCheck['piece_jointe'];
 
@@ -58,8 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_edit'])) {
             move_uploaded_file($tmpName, $uploadDir . $filename);
         }
 
-        $stmtUpd = $con->prepare("UPDATE journal_classe SET cours_id = ?, matieres = ?, note = ?, piece_jointe = ? WHERE id = ? AND prof_id = ?");
-        $stmtUpd->bind_param('isssii', $coursId, $matieres, $note, $filename, $idEdit, $agentId);
+        $stmtUpd = $con->prepare("UPDATE journal_classe SET jour_date = ?, cours_id = ?, matieres = ?, note = ?, piece_jointe = ? WHERE id = ? AND prof_id = ?");
+        $stmtUpd->bind_param('sisssii', $editDate, $coursId, $matieres, $note, $filename, $idEdit, $agentId);
         if ($stmtUpd->execute()) {
             $_SESSION['msg_success'] = "Leçon mise à jour avec succès.";
         }
@@ -309,7 +310,9 @@ include __DIR__.'/../layout/navbar.php';
                                 </a>
                                 <?php if (($f['statut'] ?? 'en attente') !== 'valider'): ?>
                                 <button type="button" class="btn btn-sm btn-outline-secondary me-1 btn-edit"
-                                    data-id="<?= (int)$f['id'] ?>" data-cours="<?= (int)$f['cours_id'] ?>"
+                                    data-id="<?= (int)$f['id'] ?>"
+                                    data-date="<?= htmlspecialchars($f['jour_date'], ENT_QUOTES) ?>"
+                                    data-cours="<?= (int)$f['cours_id'] ?>"
                                     data-matieres="<?= htmlspecialchars($f['matieres'], ENT_QUOTES) ?>"
                                     data-note="<?= htmlspecialchars($f['note'], ENT_QUOTES) ?>" data-bs-toggle="modal"
                                     data-bs-target="#editModal" title="Modifier">
@@ -349,6 +352,10 @@ include __DIR__.'/../layout/navbar.php';
             </div>
             <div class="modal-body">
                 <div class="mb-3">
+                    <label class="form-label fw-bold">Date du journal</label>
+                    <input type="date" name="edit_jour_date" id="modal_edit_date" class="form-control" required>
+                </div>
+                <div class="mb-3">
                     <label class="form-label fw-bold">Cours / Branche</label>
                     <select name="edit_cours_id" id="modal_edit_cours" class="form-select" required>
                         <option value="">-- Choisir un cours --</option>
@@ -386,6 +393,7 @@ document.addEventListener('DOMContentLoaded', function() {
     editBtns.forEach(btn => {
         btn.addEventListener('click', function() {
             document.getElementById('modal_edit_id').value = this.getAttribute('data-id');
+            document.getElementById('modal_edit_date').value = this.getAttribute('data-date');
             document.getElementById('modal_edit_cours').value = this.getAttribute('data-cours');
             document.getElementById('modal_edit_matieres').value = this.getAttribute(
                 'data-matieres');
