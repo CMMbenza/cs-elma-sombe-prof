@@ -8,508 +8,266 @@ require_prof();
 
 include __DIR__.'/../get_annee_en_cours.php';
 
-$prof     = current_prof();
-$agentId  = (int)($prof['id'] ?? 0);
-$classeId = (int)get_current_classe();
+$prof    = current_prof();
+$agentId = (int)($prof['id'] ?? 0);
 
-// Repertoire de stockage des fichiers de leçons
-$uploadDir = __DIR__.'/../../uploads/cours_lecons/';
+$journalId = (int)($_GET['journal'] ?? 0);
 
-if (!$classeId) {
-    include __DIR__.'/../layout/header.php';
-    include __DIR__.'/../layout/navbar.php';
-    echo '<div class="container mt-3"><div class="alert alert-info">
-            Aucune classe sélectionnée. <a href="/prof/switch_classe.php">Choisir une classe</a>
-          </div></div>';
-    include __DIR__.'/../layout/footer.php';
+if (!$journalId) {
+    header("Location: mes_resumes.php");
     exit;
 }
 
-$msgSuccess = '';
-$msgError   = '';
+$uploadDir = __DIR__.'/../../uploads/attachement_resume_cours/';
 
 // -------------------------------------------------------------------------
-// 1) TRAITEMENT : AJOUTER UN CHAPITRE
+// 1) CHARGEMENT DU JOURNAL DE CLASSE & INFOS ASSOCIÉES
 // -------------------------------------------------------------------------
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_lecon'])) {
-    $titreLecon  = trim((string)($_POST['titre_lecon'] ?? ''));
-    $chapitreId  = (int)($_POST['chapitre_id'] ?? 0);
-    $desc        = trim((string)($_POST['description'] ?? ''));
-    $formatType  = $_POST['format_type'] ?? 'texte';
-    $contenuText = trim((string)($_POST['contenu_resume'] ?? ''));
+$stmt = $con->prepare("
+    SELECT 
+        jc.id AS journal_id,
+        jc.jour_date,
+        jc.matieres AS matieres_saisies,
+        jc.note AS note_saisie,
+        jc.piece_jointe AS pj_journal,
+        CONCAT(cl.description ,' ', cy.description) AS classe_nom,
+        co.intitule AS cours_nom
+    FROM journal_classe jc
+    INNER JOIN classe cl ON cl.id = jc.classe_id
+    INNER JOIN cours co ON co.id = jc.cours_id
+    INNER JOIN cycle cy ON cy.id = cl.cycle
+    WHERE jc.id = ? AND jc.prof_id = ?
+");
+$stmt->bind_param('ii', $journalId, $agentId);
+$stmt->execute();
+$journal = $stmt->get_result()->fetch_assoc();
+$stmt->close();
 
-    $checkChap = $con->query("SELECT id FROM cours_chapitres WHERE id = $chapitreId AND prof_id = $agentId")->num_rows;
-    $hasFile   = isset($_FILES['fichier']) && $_FILES['fichier']['error'] === UPLOAD_ERR_OK;
-
-    if ($titreLecon === '' || $chapitreId <= 0) {
-        $msgError = "Veuillez indiquer un titre et sélectionner un chapitre.";
-    } elseif ($checkChap === 0) {
-        $msgError = "Chapitre invalide.";
-    } elseif (($formatType === 'texte' || $formatType === 'mixte') && empty($contenuText)) {
-        $msgError = "Veuillez saisir le texte du résumé.";
-    } elseif (($formatType === 'fichier' || $formatType === 'mixte') && !$hasFile) {
-        $msgError = "Veuillez sélectionner un fichier à envoyer.";
-    } else {
-        $newFilename = null;
-        $typeFormat  = 'texte';
-
-        if ($hasFile) {
-            $file      = $_FILES['fichier'];
-            $extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-
-            $allowedPdf   = ['pdf'];
-            $allowedAudio = ['mp3', 'wav', 'ogg', 'm4a'];
-            $allowedVideo = ['mp4', 'webm', 'mkv', 'avi'];
-            $allowedDocs  = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'zip', 'rar'];
-            $allowedExtensions = array_merge($allowedPdf, $allowedAudio, $allowedVideo, $allowedDocs);
-
-            if (!in_array($extension, $allowedExtensions, true)) {
-                $msgError = "Format de fichier non autorisé (.{$extension}).";
-            } else {
-                $typeFormat = 'document';
-                if (in_array($extension, $allowedPdf, true)) $typeFormat = 'pdf';
-                if (in_array($extension, $allowedAudio, true)) $typeFormat = 'audio';
-                if (in_array($extension, $allowedVideo, true)) $typeFormat = 'video';
-
-                if (!is_dir($uploadDir)) mkdir($uploadDir, 0777, true);
-
-                $newFilename = 'lecon_' . uniqid() . '.' . $extension;
-                if (!move_uploaded_file($file['tmp_name'], $uploadDir . $newFilename)) {
-                    $msgError = "Erreur lors de la sauvegarde du fichier.";
-                    $newFilename = null;
-                }
-            }
-        }
-
-        if (empty($msgError)) {
-            $stmt = $con->prepare("
-                INSERT INTO cours_lecons (chapitre_id, titre, description, contenu, fichier, type_format)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ");
-            $stmt->bind_param('isssss', $chapitreId, $titreLecon, $desc, $contenuText, $newFilename, $typeFormat);
-            if ($stmt->execute()) {
-                $msgSuccess = "La leçon a été ajoutée avec succès !";
-            } else {
-                $msgError = "Erreur BDD lors de l'enregistrement de la leçon.";
-            }
-            $stmt->close();
-        }
-    }
+if (!$journal) {
+    die('<div class="alert alert-danger m-4">Entrée du journal introuvable ou accès non autorisé.</div>');
 }
 
-// -------------------------------------------------------------------------
-// 4) TRAITEMENT : SUPPRIMER UNE LEÇON
-// -------------------------------------------------------------------------
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_delete_lecon'])) {
-    $idLeconDelete = (int)($_POST['id_lecon'] ?? 0);
+// Formatage de la date en français sans dépendance à l'extension intl
+$jours = ['Sunday' => 'Dimanche', 'Monday' => 'Lundi', 'Tuesday' => 'Mardi', 'Wednesday' => 'Mercredi', 'Thursday' => 'Jeudi', 'Friday' => 'Vendredi', 'Saturday' => 'Samedi'];
+$mois  = [1 => 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 
-    $stmtCheck = $con->prepare("
-        SELECT l.fichier 
-        FROM cours_lecons l
-        INNER JOIN cours_chapitres ch ON ch.id = l.chapitre_id
-        WHERE l.id = ? AND ch.prof_id = ?
-    ");
-    $stmtCheck->bind_param('ii', $idLeconDelete, $agentId);
+$timestamp    = strtotime($journal['jour_date']);
+$nomJour      = $jours[date('l', $timestamp)] ?? date('l', $timestamp);
+$numJour      = date('j', $timestamp);
+$nomMois      = $mois[(int)date('n', $timestamp)] ?? date('F', $timestamp);
+$annee        = date('Y', $timestamp);
+
+$dateFormatee = "{$nomJour}, {$numJour} {$nomMois} {$annee}";
+
+// -------------------------------------------------------------------------
+// 2) TRAITEMENT DU FORMULAIRE : SAUVEGARDE / MODIFICATION
+// -------------------------------------------------------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_save_resume'])) {
+    $ficheNo     = trim((string)($_POST['fiche_no'] ?? ''));
+    $domaine     = trim((string)($_POST['domaine'] ?? ''));
+    $discipline  = trim((string)($_POST['discipline'] ?? ''));
+    $titreLecon  = trim((string)($_POST['titre_lecon'] ?? ''));
+    $typeLecon   = trim((string)($_POST['type_lecon'] ?? ''));
+    $competence  = trim((string)($_POST['competence_attendue'] ?? ''));
+    $resumeTexte = trim((string)($_POST['resume_texte'] ?? ''));
+    $devoir      = trim((string)($_POST['devoir'] ?? ''));
+
+    // Vérifier si un résumé existe déjà
+    $stmtCheck = $con->prepare("SELECT id, piece_jointe FROM resume_cours WHERE journal_id = ?");
+    $stmtCheck->bind_param('i', $journalId);
     $stmtCheck->execute();
-    $resCheck = $stmtCheck->get_result()->fetch_assoc();
+    $existing = $stmtCheck->get_result()->fetch_assoc();
     $stmtCheck->close();
 
-    if ($resCheck) {
-        if (!empty($resCheck['fichier'])) {
-            @unlink($uploadDir . $resCheck['fichier']);
+    $filename = $existing['piece_jointe'] ?? null;
+
+    // Gestion de l'upload de pièce jointe
+    if (isset($_FILES['piece_jointe']['error']) && $_FILES['piece_jointe']['error'] === UPLOAD_ERR_OK) {
+        if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0777, true);
         }
-        $con->query("DELETE FROM cours_lecons WHERE id = $idLeconDelete");
-        $msgSuccess = "La leçon a été supprimée.";
+        if (!empty($filename) && file_exists($uploadDir . $filename)) {
+            @unlink($uploadDir . $filename);
+        }
+        $tmpName   = $_FILES['piece_jointe']['tmp_name'];
+        $extension = pathinfo($_FILES['piece_jointe']['name'], PATHINFO_EXTENSION);
+        $filename  = 'resume_' . uniqid() . '.' . strtolower($extension);
+        move_uploaded_file($tmpName, $uploadDir . $filename);
+    }
+
+    if ($existing) {
+        $stmtUpd = $con->prepare("
+            UPDATE resume_cours 
+            SET fiche_no = ?, domaine = ?, discipline = ?, titre_lecon = ?, type_lecon = ?, competence_attendue = ?, resume_texte = ?, devoir = ?, piece_jointe = ?
+            WHERE journal_id = ?
+        ");
+        $stmtUpd->bind_param('sssssssssi', $ficheNo, $domaine, $discipline, $titreLecon, $typeLecon, $competence, $resumeTexte, $devoir, $filename, $journalId);
+        $stmtUpd->execute();
+        $stmtUpd->close();
+        $_SESSION['msg_success'] = "Résumé de la fiche mis à jour avec succès.";
     } else {
-        $msgError = "Leçon introuvable ou accès refusé.";
+        $stmtIns = $con->prepare("
+            INSERT INTO resume_cours (journal_id, fiche_no, domaine, discipline, titre_lecon, type_lecon, competence_attendue, resume_texte, devoir, piece_jointe)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmtIns->bind_param('isssssssss', $journalId, $ficheNo, $domaine, $discipline, $titreLecon, $typeLecon, $competence, $resumeTexte, $devoir, $filename);
+        $stmtIns->execute();
+        $stmtIns->close();
+        $_SESSION['msg_success'] = "Fiche résumé enregistrée avec succès.";
     }
+
+    header("Location: mes_resumes.php");
+    exit;
 }
 
 // -------------------------------------------------------------------------
-// CHARGEMENT DES DONNÉES
+// 3) RECHARGER LES DONNÉES DU RÉSUMÉ
 // -------------------------------------------------------------------------
-$coursList = [];
-$stmt = $con->prepare("
-    SELECT DISTINCT co.id, co.intitule
-    FROM affectation_prof_classe apc
-    INNER JOIN cours co ON co.id = apc.cours_id
-    WHERE apc.agent_id = ? AND apc.classe_id = ?
-    ORDER BY co.intitule
-");
-$stmt->bind_param('ii', $agentId, $classeId);
-$stmt->execute();
-$resCours = $stmt->get_result();
-while ($row = $resCours->fetch_assoc()) {
-    $coursList[$row['id']] = $row;
-    $coursList[$row['id']]['chapitres'] = [];
-}
-$stmt->close();
+$stmtRes = $con->prepare("SELECT * FROM resume_cours WHERE journal_id = ?");
+$stmtRes->bind_param('i', $journalId);
+$stmtRes->execute();
+$resumeData = $stmtRes->get_result()->fetch_assoc();
+$stmtRes->close();
 
-$stmt = $con->prepare("
-    SELECT ch.*, co.intitule AS cours_nom 
-    FROM cours_chapitres ch 
-    INNER JOIN cours co ON co.id = ch.cours_id 
-    WHERE ch.prof_id = ? AND ch.classe_id = ? 
-    ORDER BY ch.id ASC
-");
-$stmt->bind_param('ii', $agentId, $classeId);
-$stmt->execute();
-$resChap = $stmt->get_result();
+// Valeurs par défaut
+$ficheNo    = $resumeData['fiche_no'] ?? 'Fiche n° 001';
+$domaine    = $resumeData['domaine'] ?? $journal['cours_nom'];
+$discipline = $resumeData['discipline'] ?? '';
+$titreLecon = $resumeData['titre_lecon'] ?? $journal['matieres_saisies'];
+$typeLecon  = $resumeData['type_lecon'] ?? 'découverte';
+$competence = $resumeData['competence_attendue'] ?? '';
+$resumeTxt  = $resumeData['resume_texte'] ?? '';
+$devoirTxt  = $resumeData['devoir'] ?? $journal['note_saisie'];
+$pjFile     = $resumeData['piece_jointe'] ?? $journal['pj_journal'];
 
-$allChapitresFlat = [];
-
-while ($chap = $resChap->fetch_assoc()) {
-    $chap['lecons'] = [];
-    $allChapitresFlat[] = $chap;
-    
-    if (isset($coursList[$chap['cours_id']])) {
-        $coursList[$chap['cours_id']]['chapitres'][$chap['id']] = $chap;
-    }
-}
-$stmt->close();
-
-$stmt = $con->prepare("
-    SELECT l.*, ch.cours_id 
-    FROM cours_lecons l
-    INNER JOIN cours_chapitres ch ON ch.id = l.chapitre_id
-    WHERE ch.prof_id = ? AND ch.classe_id = ?
-    ORDER BY l.id ASC
-");
-$stmt->bind_param('ii', $agentId, $classeId);
-$stmt->execute();
-$resLecons = $stmt->get_result();
-while ($lecon = $resLecons->fetch_assoc()) {
-    $cId = $lecon['cours_id'];
-    $chId = $lecon['chapitre_id'];
-    if (isset($coursList[$cId]['chapitres'][$chId])) {
-        $coursList[$cId]['chapitres'][$chId]['lecons'][] = $lecon;
-    }
-}
-$stmt->close();
+$msgSuccess = $_SESSION['msg_success'] ?? '';
+unset($_SESSION['msg_success']);
 
 include __DIR__.'/../layout/header.php';
 include __DIR__.'/../layout/navbar.php';
 ?>
 
-<div class="container mt-3 mb-5">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h4 mb-0">📚 Gestion des Cours & Résumés</h1>
-        <div>
-            <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#modalAddChapitre">
-                ➕ Nouveau Chapitre
-            </button>
-            <?php if (!empty($allChapitresFlat)): ?>
-            <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalAddLecon">
-                ✍️ Publier un Résumé / Fichier
-            </button>
-            <?php endif; ?>
-        </div>
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-3 d-print-none">
+        <a href="mes_resumes.php" class="btn btn-outline-secondary btn-sm">
+            ⬅️ Retour à Mes Résumés
+        </a>
+        <button onclick="window.print()" class="btn btn-primary btn-sm fw-bold">
+            🖨️ Imprimer la Fiche
+        </button>
     </div>
 
     <?php if (!empty($msgSuccess)): ?>
-    <div class="alert alert-success alert-dismissible fade show" role="alert">
-        <?= e($msgSuccess) ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-    <?php endif; ?>
-    <?php if (!empty($msgError)): ?>
-    <div class="alert alert-danger alert-dismissible fade show" role="alert">
-        <?= e($msgError) ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
+        <div class="alert alert-success alert-dismissible fade show d-print-none" role="alert">
+            <?= e($msgSuccess) ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
     <?php endif; ?>
 
-    <?php if (empty($coursList)): ?>
-    <div class="alert alert-warning">Aucun cours ne vous est attribué pour cette classe.</div>
-    <?php else: ?>
+    <!-- CARTE DE SAISIE ET APERÇU FICHE -->
+    <div class="card shadow border-1 p-4 bg-white" id="printableArea">
+        <form method="post" enctype="multipart/form-data">
+            <input type="hidden" name="action_save_resume" value="1">
 
-    <div class="accordion" id="accordionCours">
-        <?php foreach ($coursList as $cours): ?>
-        <div class="accordion-item mb-3 border">
-            <h2 class="accordion-header" id="headingCours<?= $cours['id'] ?>">
-                <button class="accordion-button bg-light fw-bold" type="button" data-bs-toggle="collapse"
-                    data-bs-target="#collapseCours<?= $cours['id'] ?>">
-                    📘 <?= e($cours['intitule']) ?>
-                </button>
-            </h2>
-            <div id="collapseCours<?= $cours['id'] ?>" class="accordion-collapse collapse show"
-                data-bs-parent="#accordionCours">
-                <div class="accordion-body p-4">
-
-                    <?php if (empty($cours['chapitres'])): ?>
-                    <p class="text-muted mb-0">Aucun chapitre créé pour ce cours.</p>
-                    <?php else: ?>
-
-                    <div class="row">
-                        <?php foreach ($cours['chapitres'] as $chap): ?>
-                        <div class="col-12 mb-4">
-                            <div class="card border-primary shadow-sm">
-                                <div class="card-header bg-white border-primary d-flex justify-content-between align-items-center">
-                                    <h5 class="mb-0 text-primary">📖 <?= e($chap['titre']) ?></h5>
-                                    <form method="post" onsubmit="return confirm('Supprimer ce chapitre entraînera la suppression de toutes ses leçons. Continuer ?');">
-                                        <input type="hidden" name="action_delete_chapitre" value="1">
-                                        <input type="hidden" name="id_chapitre" value="<?= (int)$chap['id'] ?>">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Supprimer le chapitre">🗑️ Chapitre</button>
-                                    </form>
-                                </div>
-                                <div class="card-body bg-light p-3">
-                                    <?php if (empty($chap['lecons'])): ?>
-                                    <div class="text-muted small">Aucun résumé ni leçon dans ce chapitre.</div>
-                                    <?php else: ?>
-                                    <div class="accordion" id="accordionLecons<?= $chap['id'] ?>">
-                                        <?php foreach ($chap['lecons'] as $index => $lec): ?>
-                                        <?php 
-                                            $fileUrl = !empty($lec['fichier']) ? '/uploads/cours_lecons/' . e($lec['fichier']) : null;
-                                            $icon = '📝';
-                                            if ($lec['type_format'] === 'pdf') $icon = '📄';
-                                            if ($lec['type_format'] === 'video') $icon = '🎥';
-                                            if ($lec['type_format'] === 'audio') $icon = '🎙️';
-                                            if ($lec['type_format'] === 'document') $icon = '📁';
-                                        ?>
-                                        <div class="accordion-item mb-2 border-0 shadow-sm">
-                                            <h2 class="accordion-header" id="headingLec<?= $lec['id'] ?>">
-                                                <button class="accordion-button collapsed bg-white text-dark fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLec<?= $lec['id'] ?>">
-                                                    <span class="me-2"><?= $icon ?></span>
-                                                    <span><?= e($lec['titre']) ?></span>
-                                                </button>
-                                            </h2>
-                                            <div id="collapseLec<?= $lec['id'] ?>" class="accordion-collapse collapse" data-bs-parent="#accordionLecons<?= $chap['id'] ?>">
-                                                <div class="accordion-body bg-white border-top">
-                                                    
-                                                    <?php if (!empty($lec['description'])): ?>
-                                                    <p class="text-muted small mb-3"><strong>Consignes :</strong> <?= nl2br(e($lec['description'])) ?></p>
-                                                    <?php endif; ?>
-
-                                                    <!-- AFFICHAGE DU RÉSUMÉ TEXTE S'IL EXISTE -->
-                                                    <?php if (!empty($lec['contenu'])): ?>
-                                                    <div class="card bg-light border-0 p-3 mb-3">
-                                                        <h6 class="fw-bold text-primary mb-2">📌 Résumé du cours :</h6>
-                                                        <div class="content-body">
-                                                            <?= nl2br(e($lec['contenu'])) ?>
-                                                        </div>
-                                                    </div>
-                                                    <?php endif; ?>
-
-                                                    <!-- FICHIER ATTACHÉ (OPTIONNEL) -->
-                                                    <div class="d-flex align-items-center justify-content-between mt-3 pt-2 border-top">
-                                                        <div>
-                                                            <?php if ($fileUrl): ?>
-                                                                <?php if ($lec['type_format'] === 'audio'): ?>
-                                                                    <audio controls style="height: 35px;">
-                                                                        <source src="<?= $fileUrl ?>">
-                                                                    </audio>
-                                                                <?php elseif ($lec['type_format'] === 'video'): ?>
-                                                                    <a href="<?= $fileUrl ?>" target="_blank" class="btn btn-sm btn-primary">▶️ Regarder la vidéo</a>
-                                                                <?php else: ?>
-                                                                    <a href="<?= $fileUrl ?>" target="_blank" class="btn btn-sm btn-outline-primary">📎 Télécharger le support (<?= strtoupper(pathinfo($lec['fichier'], PATHINFO_EXTENSION)) ?>)</a>
-                                                                <?php endif; ?>
-                                                            <?php else: ?>
-                                                                <span class="badge bg-secondary">Aucun fichier attaché</span>
-                                                            <?php endif; ?>
-                                                        </div>
-
-                                                        <form method="post" onsubmit="return confirm('Supprimer ce résumé / leçon ?');">
-                                                            <input type="hidden" name="action_delete_lecon" value="1">
-                                                            <input type="hidden" name="id_lecon" value="<?= (int)$lec['id'] ?>">
-                                                            <button type="submit" class="btn btn-sm btn-danger">🗑️ Supprimer</button>
-                                                        </form>
-                                                    </div>
-
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <?php endforeach; ?>
-                                    </div>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                    <?php endif; ?>
-
+            <!-- Entête -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Numéro de la Fiche :</label>
+                    <input type="text" name="fiche_no" class="form-control form-control-sm" value="<?= e($ficheNo) ?>" required>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Date :</label>
+                    <input type="text" class="form-control form-control-sm bg-light fw-bold" value="<?= e($dateFormatee) ?>" readonly>
                 </div>
             </div>
-        </div>
-        <?php endforeach; ?>
-    </div>
-    <?php endif; ?>
-</div>
 
-<!-- ================= MODALS ================= -->
-
-<!-- Modal Ajouter Chapitre -->
-<div class="modal fade" id="modalAddChapitre" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <form method="post">
-                <input type="hidden" name="action_add_chapitre" value="1">
-                <div class="modal-header bg-primary text-white">
-                    <h5 class="modal-title">Créer un nouveau Chapitre</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Classe :</label>
+                    <input type="text" class="form-control form-control-sm bg-light" value="<?= e($journal['classe_nom']) ?>" readonly>
                 </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Sélectionner le Cours / Branche</label>
-                        <select name="cours_id" class="form-select" required>
-                            <option value="">-- Choisir un cours --</option>
-                            <?php foreach ($coursList as $c): ?>
-                            <option value="<?= $c['id'] ?>"><?= e($c['intitule']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Domaine :</label>
+                    <input type="text" name="domaine" class="form-control form-control-sm" value="<?= e($domaine) ?>" required>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Discipline (Sous-branche) :</label>
+                    <input type="text" name="discipline" class="form-control form-control-sm" placeholder="Ex: Grammaire, Algèbre..." value="<?= e($discipline) ?>" required>
+                </div>
+            </div>
+
+            <hr class="my-3">
+
+            <!-- Leçon -->
+            <div class="mb-3">
+                <label class="form-label fw-bold">Titre de la leçon :</label>
+                <input type="text" name="titre_lecon" class="form-control" value="<?= e($titreLecon) ?>" required>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-bold">Type de leçon :</label>
+                <select name="type_lecon" class="form-select form-select-sm" required>
+                    <?php 
+                    $types = ['découverte', 'apprentissage', 'consolidation', 'remédiation', 'révision', 'évaluation'];
+                    foreach ($types as $t): 
+                    ?>
+                        <option value="<?= $t ?>" <?= ($typeLecon === $t) ? 'selected' : '' ?>><?= ucfirst($t) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-bold">Compétence attendue :</label>
+                <textarea name="competence_attendue" class="form-control" rows="2" placeholder="Ex: définir, identifier et employer..." required><?= e($competence) ?></textarea>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-bold">Résumé (ou texte du cours) :</label>
+                <textarea name="resume_texte" class="form-control" rows="5" placeholder="Saisir la synthèse / résumé du cours..."><?= e($resumeTxt) ?></textarea>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-bold">Devoir :</label>
+                <input type="text" name="devoir" class="form-control form-control-sm" placeholder="Ex: voir le quiz sur la plateforme de l'école." value="<?= e($devoirTxt) ?>">
+            </div>
+
+            <!-- Pièce jointe -->
+            <div class="mb-4">
+                <label class="form-label fw-bold">Pièce jointe / Support de cours (Optionnel) :</label>
+                <?php if (!empty($pjFile)): ?>
+                    <div class="mb-2">
+                        <a href="/uploads/attachement_resume_cours/<?= e($pjFile) ?>" target="_blank" class="btn btn-sm btn-outline-primary fw-bold">
+                            📎 Consulter le fichier joint actuel
+                        </a>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Titre du chapitre</label>
-                        <input type="text" name="titre_chapitre" class="form-control" placeholder="Ex: Chapitre 1 - Introduction" required>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="submit" class="btn btn-primary">Enregistrer le Chapitre</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
+                <?php endif; ?>
+                <input type="file" name="piece_jointe" class="form-control form-control-sm d-print-none">
+            </div>
 
-<!-- Modal Publier Résumé / Leçon -->
-<!-- Modal Publier Résumé / Leçon -->
-<div class="modal fade" id="modalAddLecon" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <form method="post" enctype="multipart/form-data">
-                <input type="hidden" name="action_add_lecon" value="1">
-                <div class="modal-header bg-success text-white">
-                    <h5 class="modal-title">✍️ Publier un Support de Cours</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="row g-3">
-                        
-                        <!-- 1. Sélection Chapitre & Titre -->
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">Chapitre <span class="text-danger">*</span></label>
-                            <select name="chapitre_id" class="form-select" required>
-                                <option value="">-- Choisir le chapitre --</option>
-                                <?php 
-                                $currentCours = '';
-                                foreach ($allChapitresFlat as $chapSelect): 
-                                    if ($currentCours !== $chapSelect['cours_nom']): 
-                                        if ($currentCours !== '') echo '</optgroup>';
-                                        $currentCours = $chapSelect['cours_nom'];
-                                        echo '<optgroup label="Cours : '.e($currentCours).'">';
-                                    endif;
-                                ?>
-                                <option value="<?= $chapSelect['id'] ?>"><?= e($chapSelect['titre']) ?></option>
-                                <?php endforeach; 
-                                if ($currentCours !== '') echo '</optgroup>';
-                                ?>
-                            </select>
-                        </div>
-                        
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">Titre du cours / sujet <span class="text-danger">*</span></label>
-                            <input type="text" name="titre_lecon" class="form-control" placeholder="Ex: Leçon 1 - Structure de l'atome" required>
-                        </div>
-
-                        <!-- 2. CHOIX DU FORMAT (Radio buttons) -->
-                        <div class="col-12">
-                            <label class="form-label fw-bold text-primary">Quel type de contenu souhaitez-vous ajouter ? <span class="text-danger">*</span></label>
-                            <div class="d-flex gap-4 p-3 bg-light rounded border">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="format_type" id="formatTexte" value="texte" checked>
-                                    <label class="form-check-label fw-bold" for="formatTexte">
-                                        📝 Saisir un résumé (Texte)
-                                    </label>
-                                </div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="format_type" id="formatFichier" value="fichier">
-                                    <label class="form-check-label fw-bold" for="formatFichier">
-                                        📎 Joindre un fichier (PDF, MP4, MP3, Doc...)
-                                    </label>
-                                </div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="format_type" id="formatMixte" value="mixte">
-                                    <label class="form-check-label fw-bold" for="formatMixte">
-                                        📑 Résumé + Fichier joint
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="col-12">
-                            <label class="form-label fw-bold">Consignes / Objectifs (Optionnel)</label>
-                            <input type="text" name="description" class="form-control" placeholder="Ex: À lire avant la séance de travaux pratiques.">
-                        </div>
-
-                        <!-- 3. ZONE RÉSUMÉ TEXTE (Affichée par défaut) -->
-                        <div class="col-12" id="block_texte">
-                            <label class="form-label fw-bold text-success">📝 Contenu du résumé / Rédaction du cours</label>
-                            <textarea name="contenu_resume" id="input_contenu" class="form-control" rows="6" placeholder="Rédigez directement votre leçon ou résumé ici..."></textarea>
-                        </div>
-
-                        <!-- 4. ZONE FICHIER (Masquée par défaut) -->
-                        <div class="col-12 d-none" id="block_fichier">
-                            <label class="form-label fw-bold text-primary">📎 Document ou média attaché</label>
-                            <input type="file" name="fichier" id="input_fichier" class="form-control">
-                            <small class="text-muted d-block mt-1">Formats acceptés : PDF, Word, Excel, MP4, MP3... (Max 100 Mo)</small>
-                        </div>
-
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="submit" class="btn btn-success">Enregistrer & Publier</button>
-                </div>
-            </form>
-        </div>
+            <div class="text-end d-print-none">
+                <button type="submit" class="btn btn-success fw-bold px-4">
+                    💾 Enregistrer le résumé
+                </button>
+            </div>
+        </form>
     </div>
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const radioTexte = document.getElementById('formatTexte');
-    const radioFichier = document.getElementById('formatFichier');
-    const radioMixte = document.getElementById('formatMixte');
-
-    const blockTexte = document.getElementById('block_texte');
-    const blockFichier = document.getElementById('block_fichier');
-
-    const inputContenu = document.getElementById('input_contenu');
-    const inputFichier = document.getElementById('input_fichier');
-
-    function updateFormDisplay() {
-        if (radioTexte.checked) {
-            blockTexte.classList.remove('d-none');
-            blockFichier.classList.add('d-none');
-            
-            inputContenu.setAttribute('required', 'required');
-            inputFichier.removeAttribute('required');
-            inputFichier.value = ''; // Réinitialiser le fichier
-        } else if (radioFichier.checked) {
-            blockTexte.classList.add('d-none');
-            blockFichier.classList.remove('d-none');
-            
-            inputFichier.setAttribute('required', 'required');
-            inputContenu.removeAttribute('required');
-            inputContenu.value = ''; // Réinitialiser le texte
-        } else if (radioMixte.checked) {
-            blockTexte.classList.remove('d-none');
-            blockFichier.classList.remove('d-none');
-            
-            inputContenu.setAttribute('required', 'required');
-            inputFichier.setAttribute('required', 'required');
-        }
+<style>
+@media print {
+    .d-print-none, .navbar, header, footer {
+        display: none !important;
     }
-
-    // Écouter les changements sur les radios
-    radioTexte.addEventListener('change', updateFormDisplay);
-    radioFichier.addEventListener('change', updateFormDisplay);
-    radioMixte.addEventListener('change', updateFormDisplay);
-
-    // Initialiser au chargement
-    updateFormDisplay();
-});
-</script>
+    .card {
+        border: 1px solid #000 !important;
+        box-shadow: none !important;
+    }
+    input, textarea, select {
+        border: none !important;
+        background: transparent !important;
+        padding: 0 !important;
+    }
+}
+</style>
 
 <?php include __DIR__.'/../layout/footer.php'; ?>
