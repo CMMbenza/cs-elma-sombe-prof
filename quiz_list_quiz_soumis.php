@@ -196,97 +196,107 @@ include __DIR__.'/layout/navbar.php';
 </div>
 
 <script>
-// --- Filtrage côté client (inchangé) ---
-const fClasse = document.getElementById('fClasse');
-const fCours = document.getElementById('fCours');
-const fStatut = document.getElementById('fStatut');
-const fSearch = document.getElementById('fSearch');
-const fDateFrom = document.getElementById('fDateFrom');
-const fDateTo = document.getElementById('fDateTo');
-const table = document.getElementById('subTable');
-const infoCount = document.getElementById('infoCount');
-const badgeTotal = document.getElementById('badgeTotal');
-const badgeRemis = document.getElementById('badgeRemis');
-const badgeCorrige = document.getElementById('badgeCorrige');
-const btnReset = document.getElementById('btnReset');
+document.addEventListener('DOMContentLoaded', () => {
+    const fClasse = document.getElementById('fClasse');
+    const fCours = document.getElementById('fCours');
+    const fStatut = document.getElementById('fStatut');
+    const fSearch = document.getElementById('fSearch');
+    const fDateFrom = document.getElementById('fDateFrom');
+    const fDateTo = document.getElementById('fDateTo');
+    const table = document.getElementById('subTable');
+    const infoCount = document.getElementById('infoCount');
+    const badgeTotal = document.getElementById('badgeTotal');
+    const badgeRemis = document.getElementById('badgeRemis');
+    const badgeCorrige = document.getElementById('badgeCorrige');
+    const btnReset = document.getElementById('btnReset');
 
-function applyFilter() {
-    if (!table) return;
-    const rows = table.querySelectorAll('tbody tr');
+    const allCoursOptions = Array.from(fCours?.querySelectorAll('option') || []);
 
-    const qName = (fSearch?.value || '').trim().toLowerCase();
-    const st = (fStatut?.value || '').trim().toLowerCase();
-    const cid = (fClasse?.value || '').trim();
-    const course = (fCours?.value || '').trim().toLowerCase();
-    const dFrom = (fDateFrom?.value || '').trim();
-    const dTo = (fDateTo?.value || '').trim();
+    function applyFilter() {
+        if (!table) return;
+        const rows = table.querySelectorAll('tbody tr');
 
-    let shown = 0,
-        remis = 0,
-        corrige = 0;
+        const qName = (fSearch?.value || '').trim().toLowerCase();
+        const st = (fStatut?.value || '').trim().toLowerCase();
+        const cid = (fClasse?.value || '').trim();
+        const course = (fCours?.value || '').trim().toLowerCase();
+        const dFrom = (fDateFrom?.value || '').trim();
+        const dTo = (fDateTo?.value || '').trim();
 
-    rows.forEach(tr => {
-        const name = (tr.getAttribute('data-name') || '').toLowerCase();
-        const status = (tr.getAttribute('data-status') || '').toLowerCase();
-        const classId = (tr.getAttribute('data-class-id') || '').trim();
-        const cour = (tr.getAttribute('data-course') || '').toLowerCase();
-        const d = (tr.getAttribute('data-date') || '').trim();
+        let shown = 0,
+            remis = 0,
+            corrige = 0;
 
-        let ok = true;
-        if (qName && !name.includes(qName)) ok = false;
-        if (st && status !== st) ok = false;
-        if (cid && classId !== cid) ok = false;
-        if (course && cour !== course) ok = false;
-        if (dFrom && (!d || d < dFrom)) ok = false;
-        if (dTo && (!d || d > dTo)) ok = false;
+        rows.forEach(tr => {
+            const name = (tr.getAttribute('data-name') || '').toLowerCase();
+            const status = (tr.getAttribute('data-status') || '').toLowerCase();
+            const classId = (tr.getAttribute('data-class-id') || '').trim();
+            const cour = (tr.getAttribute('data-course') || '').toLowerCase();
+            const d = (tr.getAttribute('data-date') || '').trim();
 
-        tr.style.display = ok ? '' : 'none';
-        if (ok) {
-            shown++;
-            if (status === 'corrige') corrige++;
-            else remis++;
-        }
+            let ok = true;
+            if (qName && !name.includes(qName)) ok = false;
+            if (st && status !== st) ok = false;
+            if (cid && classId !== cid) ok = false;
+            if (course && cour !== course) ok = false;
+            if (dFrom && (!d || d < dFrom)) ok = false;
+            if (dTo && (!d || d > dTo)) ok = false;
+
+            tr.style.display = ok ? '' : 'none';
+            if (ok) {
+                shown++;
+                if (status === 'corrige') corrige++;
+                else remis++;
+            }
+        });
+
+        if (infoCount) infoCount.textContent = `Total affiché : ${shown} soumission(s).`;
+        if (badgeTotal) badgeTotal.textContent = `Total: ${shown}`;
+        if (badgeRemis) badgeRemis.textContent = `Remis: ${remis}`;
+        if (badgeCorrige) badgeCorrige.textContent = `Corrigé: ${corrige}`;
+    }
+
+    function syncCoursWithClasse() {
+        if (!fCours) return;
+        const cid = (fClasse?.value || '').trim();
+
+        fCours.innerHTML = '';
+        allCoursOptions.forEach((opt, idx) => {
+            if (idx === 0) {
+                fCours.appendChild(opt.cloneNode(true));
+                return;
+            }
+            const ocid = (opt.getAttribute('data-classe') || '').trim();
+            if (!cid || ocid === cid) {
+                fCours.appendChild(opt.cloneNode(true));
+            }
+        });
+
+        fCours.selectedIndex = 0;
+        applyFilter();
+    }
+
+    // Écouteurs d'événements
+    fClasse?.addEventListener('change', syncCoursWithClasse);
+    fCours?.addEventListener('change', applyFilter);
+    fStatut?.addEventListener('change', applyFilter);
+    fSearch?.addEventListener('input', applyFilter);
+    fDateFrom?.addEventListener('change', applyFilter);
+    fDateTo?.addEventListener('change', applyFilter);
+
+    // Réinitialiser
+    btnReset?.addEventListener('click', () => {
+        if (fClasse) fClasse.value = '';
+        if (fStatut) fStatut.value = '';
+        if (fSearch) fSearch.value = '';
+        if (fDateFrom) fDateFrom.value = '';
+        if (fDateTo) fDateTo.value = '';
+        syncCoursWithClasse();
     });
 
-    infoCount.textContent = `Total affiché : ${shown} soumission(s).`;
-    if (badgeTotal) badgeTotal.textContent = `Total: ${shown}`;
-    if (badgeRemis) badgeRemis.textContent = `Remis: ${remis}`;
-    if (badgeCorrige) badgeCorrige.textContent = `Corrigé: ${corrige}`;
-}
-
-// Synchroniser cours / classe
-const allCoursOptions = Array.from(fCours?.querySelectorAll('option') || []);
-
-function syncCoursWithClasse() {
-    if (!fCours) return;
-    const cid = (fClasse?.value || '').trim();
-    const keepFirst = allCoursOptions[0];
-    const filtered = allCoursOptions.filter((opt, idx) => {
-        if (idx === 0) return true;
-        const ocid = (opt.getAttribute('data-classe') || '').trim();
-        return !cid || ocid === cid;
-    });
-    fCours.innerHTML = '';
-    filtered.forEach(opt => fCours.appendChild(opt.cloneNode(true)));
-    fCours.selectedIndex = 0;
-    applyFilter();
-}
-[fClasse]?.forEach(el => el.addEventListener('change', syncCoursWithClasse));
-
-// Réinitialiser
-btnReset?.addEventListener('click', () => {
-    if (fClasse) fClasse.value = '';
+    // Initialisation
     syncCoursWithClasse();
-    if (fStatut) fStatut.value = '';
-    if (fSearch) fSearch.value = '';
-    if (fDateFrom) fDateFrom.value = '';
-    if (fDateTo) fDateTo.value = '';
-    applyFilter();
 });
-
-// Init
-syncCoursWithClasse();
-applyFilter();
 </script>
 
 <?php include __DIR__.'/layout/footer.php'; ?>

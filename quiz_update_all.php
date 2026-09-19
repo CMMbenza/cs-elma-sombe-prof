@@ -3,10 +3,10 @@ declare(strict_types=1);
 
 header('Content-Type: application/json');
 
-ini_set('display_errors', '0'); // ✅ string obligatoire
+ini_set('display_errors', '0');
 error_reporting(E_ALL);
 
-require_once __DIR__.'/includes/db.php'; // 🔥 OBLIGATOIRE
+require_once __DIR__.'/includes/db.php';
 require_once __DIR__.'/includes/auth.php';
 require_once __DIR__.'/includes/helpers.php';
 
@@ -78,19 +78,25 @@ try {
     }
 
     /* ==========================
-       UPDATE QUIZ
+       UPDATE QUIZ (AVEC CREATED_AT ET COURS_ID)
     ========================== */
+    $coursId   = (int)($data['cours_id'] ?? 0);
+    $createdAt = !empty($data['created_at']) ? date('Y-m-d H:i:s', strtotime($data['created_at'])) : date('Y-m-d H:i:s');
+    $dateLimite = !empty($data['date_limite']) ? $data['date_limite'] : null;
+
     $stmt = $con->prepare("
         UPDATE quiz 
-        SET description=?, type_quiz=?, date_limite=?
+        SET cours_id=?, description=?, type_quiz=?, created_at=?, date_limite=?
         WHERE id=?
     ");
 
     $stmt->bind_param(
-        'sssi',
+        'issssi',
+        $coursId,
         $data['description'],
         $data['type_quiz'],
-        $data['date_limite'],
+        $createdAt,
+        $dateLimite,
         $quizId
     );
 
@@ -123,90 +129,92 @@ try {
     ========================== */
     $order = 1;
 
-    foreach ($data['questions'] as $q) {
+    if (!empty($data['questions']) && is_array($data['questions'])) {
+        foreach ($data['questions'] as $q) {
 
-        $text   = trim($q['text'] ?? '');
-        $points = (int)($q['points'] ?? 1);
+            $text   = trim($q['text'] ?? '');
+            $points = (int)($q['points'] ?? 1);
 
-        if ($text === '') continue;
+            if ($text === '') continue;
 
-        $stmt = $con->prepare("
-            INSERT INTO quiz_question 
-            (quiz_id, TYPE, question_text, points, sort_order)
-            VALUES (?, ?, ?, ?, ?)
-        ");
+            $stmt = $con->prepare("
+                INSERT INTO quiz_question 
+                (quiz_id, TYPE, question_text, points, sort_order)
+                VALUES (?, ?, ?, ?, ?)
+            ");
 
-        $stmt->bind_param(
-            'issii',
-            $quizId,
-            $quizFormat,
-            $text,
-            $points,
-            $order
-        );
+            $stmt->bind_param(
+                'issii',
+                $quizId,
+                $quizFormat,
+                $text,
+                $points,
+                $order
+            );
 
-        if (!$stmt->execute()) {
-            throw new Exception("Erreur insertion question");
-        }
-
-        $questionId = $stmt->insert_id;
-
-        /* ===== RQ ===== */
-        if ($quizFormat === 'RQ' && !empty($q['keywords'])) {
-
-            $keywords = explode(',', $q['keywords']);
-
-            foreach ($keywords as $k) {
-
-                $k = trim($k);
-                if ($k === '') continue;
-
-                $stmtK = $con->prepare("
-                    INSERT INTO quiz_question_keyword 
-                    (question_id, keyword, poids)
-                    VALUES (?, ?, 1)
-                ");
-
-                $stmtK->bind_param('is', $questionId, $k);
-                $stmtK->execute();
+            if (!$stmt->execute()) {
+                throw new Exception("Erreur insertion question");
             }
-        }
 
-        /* ===== QCM ===== */
-        if ($quizFormat === 'QCM' && !empty($q['choices'])) {
+            $questionId = $stmt->insert_id;
 
-            $cOrder = 1;
+            /* ===== RQ ===== */
+            if ($quizFormat === 'RQ' && !empty($q['keywords'])) {
 
-            foreach ($q['choices'] as $c) {
+                $keywords = explode(',', $q['keywords']);
 
-                $textChoice = trim($c['text'] ?? '');
-                if ($textChoice === '') continue;
+                foreach ($keywords as $k) {
 
-                $correct = (int)($c['correct'] ?? 0);
+                    $k = trim($k);
+                    if ($k === '') continue;
 
-                $stmtC = $con->prepare("
-                    INSERT INTO quiz_choice
-                    (question_id, choice_text, is_correct, sort_order)
-                    VALUES (?, ?, ?, ?)
-                ");
+                    $stmtK = $con->prepare("
+                        INSERT INTO quiz_question_keyword 
+                        (question_id, keyword, poids)
+                        VALUES (?, ?, 1)
+                    ");
 
-                $stmtC->bind_param(
-                    'isii',
-                    $questionId,
-                    $textChoice,
-                    $correct,
-                    $cOrder
-                );
-
-                if (!$stmtC->execute()) {
-                    throw new Exception("Erreur insertion choix");
+                    $stmtK->bind_param('is', $questionId, $k);
+                    $stmtK->execute();
                 }
-
-                $cOrder++;
             }
-        }
 
-        $order++;
+            /* ===== QCM ===== */
+            if ($quizFormat === 'QCM' && !empty($q['choices'])) {
+
+                $cOrder = 1;
+
+                foreach ($q['choices'] as $c) {
+
+                    $textChoice = trim($c['text'] ?? '');
+                    if ($textChoice === '') continue;
+
+                    $correct = (int)($c['correct'] ?? 0);
+
+                    $stmtC = $con->prepare("
+                        INSERT INTO quiz_choice
+                        (question_id, choice_text, is_correct, sort_order)
+                        VALUES (?, ?, ?, ?)
+                    ");
+
+                    $stmtC->bind_param(
+                        'isii',
+                        $questionId,
+                        $textChoice,
+                        $correct,
+                        $cOrder
+                    );
+
+                    if (!$stmtC->execute()) {
+                        throw new Exception("Erreur insertion choix");
+                    }
+
+                    $cOrder++;
+                }
+            }
+
+            $order++;
+        }
     }
 
     $con->commit();
@@ -217,7 +225,7 @@ try {
 
 } catch (Throwable $e) {
 
-    if ($con && $con->errno === 0) {
+    if (isset($con) && $con instanceof mysqli) {
         $con->rollback();
     }
 

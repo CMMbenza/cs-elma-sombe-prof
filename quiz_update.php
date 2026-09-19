@@ -33,22 +33,22 @@ $success = '';
 
 try {
     // Charger quiz
-$stmt = $con->prepare("SELECT * FROM quiz WHERE id=? LIMIT 1");
-$stmt->bind_param('i', $quizId);
-$stmt->execute();
-$quiz = $stmt->get_result()->fetch_assoc();
+    $stmt = $con->prepare("SELECT * FROM quiz WHERE id=? LIMIT 1");
+    $stmt->bind_param('i', $quizId);
+    $stmt->execute();
+    $quiz = $stmt->get_result()->fetch_assoc();
 
-// 🔥 récupérer classes liées au quiz
-$stmtQC = $con->prepare("SELECT classe_id FROM quiz_classe WHERE quiz_id=?");
-$stmtQC->bind_param('i', $quizId);
-$stmtQC->execute();
-$resQC = $stmtQC->get_result();
+    // 🔥 récupérer classes liées au quiz
+    $stmtQC = $con->prepare("SELECT classe_id FROM quiz_classe WHERE quiz_id=?");
+    $stmtQC->bind_param('i', $quizId);
+    $stmtQC->execute();
+    $resQC = $stmtQC->get_result();
 
-$quizClasses = [];
+    $quizClasses = [];
 
-while ($row = $resQC->fetch_assoc()) {
-    $quizClasses[] = (int)$row['classe_id'];
-}
+    while ($row = $resQC->fetch_assoc()) {
+        $quizClasses[] = (int)$row['classe_id'];
+    }
 
     if (!$quiz || (int)$quiz['agent_id'] !== $agentId) {
         redirect('/prof/quiz_list.php');
@@ -79,41 +79,40 @@ while ($row = $resQC->fetch_assoc()) {
         }
     }
 
-// Charger choix (pour QCM)
-$choicesByQ = [];
+    // Charger choix (pour QCM)
+    $choicesByQ = [];
 
-if (!empty($questions)) {
+    if (!empty($questions)) {
 
-    $ids = array_column($questions, 'id');
+        $ids = array_column($questions, 'id');
 
-    if (!empty($ids)) {
+        if (!empty($ids)) {
 
-        $in  = implode(',', array_fill(0, count($ids), '?'));
-        $types = str_repeat('i', count($ids));
+            $in  = implode(',', array_fill(0, count($ids), '?'));
+            $types = str_repeat('i', count($ids));
 
-        $sql = "
-            SELECT 
-                id,
-                question_id,
-                choice_text,
-                is_correct,
-                sort_order
-            FROM quiz_choice
-            WHERE question_id IN ($in)
-            ORDER BY question_id, sort_order, id
-        ";
+            $sql = "
+                SELECT 
+                    id,
+                    question_id,
+                    choice_text,
+                    is_correct,
+                    sort_order
+                FROM quiz_choice
+                WHERE question_id IN ($in)
+                ORDER BY question_id, sort_order, id
+            ";
 
-        $stmtC = $con->prepare($sql);
-        $stmtC->bind_param($types, ...$ids);
-        $stmtC->execute();
+            $stmtC = $con->prepare($sql);
+            $stmtC->bind_param($types, ...$ids);
+            $stmtC->execute();
 
-        $resC = $stmtC->get_result();
+            $resC = $stmtC->get_result();
 
-        while ($c = $resC->fetch_assoc()) {
-            $choicesByQ[(int)$c['question_id']][] = $c;
+            while ($c = $resC->fetch_assoc()) {
+                $choicesByQ[(int)$c['question_id']][] = $c;
+            }
         }
-    }
-// }
 
         // 🔥 récupérer classes liées au quiz
         $stmtC = $con->prepare("
@@ -141,44 +140,44 @@ if (!empty($questions)) {
 
     $coursByClasse = [];
 
-if ($classes) {
-    $classIds = array_map(fn($c) => (int)$c['id'], $classes);
+    if ($classes) {
+        $classIds = array_map(fn($c) => (int)$c['id'], $classes);
 
-    if ($classIds) {
-        $in  = implode(',', array_fill(0, count($classIds), '?'));
-        $typ = str_repeat('i', count($classIds));
+        if ($classIds) {
+            $in  = implode(',', array_fill(0, count($classIds), '?'));
+            $typ = str_repeat('i', count($classIds));
 
-        $sqlCours = "
-            SELECT co.id, co.intitule, co.classe_id
-            FROM cours co
-            INNER JOIN affectation_prof_classe apc
-                ON apc.cours_id = co.id
-                AND apc.agent_id = ?
-            WHERE co.classe_id IN ($in)
-            ORDER BY co.intitule
-        ";
+            $sqlCours = "
+                SELECT co.id, co.intitule, co.classe_id
+                FROM cours co
+                INNER JOIN affectation_prof_classe apc
+                    ON apc.cours_id = co.id
+                    AND apc.agent_id = ?
+                WHERE co.classe_id IN ($in)
+                ORDER BY co.intitule
+            ";
 
-        $stmt = $con->prepare($sqlCours);
+            $stmt = $con->prepare($sqlCours);
 
-        $bindTypes = 'i' . $typ;
-        $params = array_merge([$agentId], $classIds);
+            $bindTypes = 'i' . $typ;
+            $params = array_merge([$agentId], $classIds);
 
-        $stmt->bind_param($bindTypes, ...$params);
-        $stmt->execute();
+            $stmt->bind_param($bindTypes, ...$params);
+            $stmt->execute();
 
-        $res = $stmt->get_result();
+            $res = $stmt->get_result();
 
-        while ($row = $res->fetch_assoc()) {
-            $cid = (int)$row['classe_id'];
-            $coursByClasse[$cid][] = [
-                'id' => (int)$row['id'],
-                'intitule' => $row['intitule']
-            ];
+            while ($row = $res->fetch_assoc()) {
+                $cid = (int)$row['classe_id'];
+                $coursByClasse[$cid][] = [
+                    'id' => (int)$row['id'],
+                    'intitule' => $row['intitule']
+                ];
+            }
+
+            $stmt->close();
         }
-
-        $stmt->close();
     }
-}
 
 } catch (Throwable $e) {
     $error = "Impossible de charger le quiz.";
@@ -190,6 +189,11 @@ $res = $con->query("SELECT id, description FROM cycle ORDER BY description");
 while ($row = $res->fetch_assoc()) {
     $cycles[] = $row;
 }
+
+// Formatage de la date de création pour l'input datetime-local
+$createdAtFormatted = !empty($quiz['created_at']) 
+    ? date('Y-m-d\TH:i', strtotime($quiz['created_at'])) 
+    : date('Y-m-d\TH:i');
 
 include __DIR__.'/layout/header.php';
 include __DIR__.'/layout/navbar.php';
@@ -265,7 +269,7 @@ include __DIR__.'/layout/navbar.php';
                 </div>
 
                 <div class="row mb-3">
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label">Type</label>
                         <select name="type_quiz" class="form-select" required>
                             <?php
@@ -278,9 +282,9 @@ include __DIR__.'/layout/navbar.php';
                         </select>
                     </div>
 
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label">Format</label>
-                        <select name="format" class="form-select" disabled required>
+                        <select name="format" id="format" class="form-select" disabled required>
                             <?php
                             $formats = ['QCM','RQ','PJ'];
                             foreach ($formats as $f):
@@ -289,9 +293,19 @@ include __DIR__.'/layout/navbar.php';
                                 <?= e($f) ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <input type="hidden" name="format_hidden" id="format_hidden"
+                            value="<?= e($quiz['format'] ?? 'QCM') ?>">
                     </div>
 
-                    <div class="col-md-4">
+                    <!-- DATE DE CREATION -->
+                    <div class="col-md-3">
+                        <label class="form-label">Programmer la date</label>
+                        <input type="datetime-local" name="created_at" id="created_at" class="form-control"
+                            value="<?= e($createdAtFormatted) ?>" required>
+                    </div>
+
+                    <!-- DATE LIMITE -->
+                    <div class="col-md-3">
                         <label class="form-label text-danger">Date limite</label>
                         <input type="date" name="date_limite" class="form-control"
                             value="<?= e((string)($quiz['date_limite'] ?? '')) ?>">
@@ -454,16 +468,6 @@ document.getElementById('classe_ids').addEventListener('change', function() {
 
 });
 
-const payload = {
-    quiz_id: quizId,
-    classe_ids: Array.from(document.getElementById('classe_ids').selectedOptions).map(o => o.value),
-    cours_id: document.getElementById('cours_id').value,
-    description: document.querySelector('[name="description"]').value,
-    type_quiz: document.querySelector('[name="type_quiz"]').value,
-    date_limite: document.querySelector('[name="date_limite"]').value,
-    questions: []
-};
-
 document.getElementById('btnSaveAll')?.addEventListener('click', async function(e) {
     e.preventDefault();
 
@@ -501,7 +505,8 @@ document.getElementById('btnSaveAll')?.addEventListener('click', async function(
             cours_id,
             description: document.querySelector('[name="description"]').value,
             type_quiz: document.querySelector('[name="type_quiz"]').value,
-            format: document.querySelector('[name="format"]').value,
+            format: document.getElementById('format_hidden').value,
+            created_at: document.querySelector('[name="created_at"]').value,
             date_limite: document.querySelector('[name="date_limite"]').value,
             questions: []
         };
@@ -661,15 +666,6 @@ document.addEventListener('click', function(e) {
     }
 });
 
-document.addEventListener('click', function(e) {
-
-    if (e.target.classList.contains('delete-question')) {
-        e.preventDefault();
-        e.target.closest('.question-card').remove();
-    }
-
-});
-
 document.addEventListener('click', async function(e) {
 
     if (e.target.classList.contains('delete-attachment')) {
@@ -707,6 +703,7 @@ document.addEventListener('click', async function(e) {
     }
 
 });
+
 window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('classe_ids').dispatchEvent(new Event('change'));
 });

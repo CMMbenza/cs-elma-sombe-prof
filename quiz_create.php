@@ -114,8 +114,8 @@ autosaveStatus.className = "text-success";
 autosaveStatus.innerHTML = "❌ Erreur de sauvegarde";
 autosaveStatus.className = "text-danger";
 </script>
-<div class="container">
-    <div class="card">
+<div class="container py-4">
+    <div class="card shadow-sm">
         <div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-3">
                 <h2 class="h5 mb-0">Créer un quiz</h2>
@@ -131,6 +131,7 @@ autosaveStatus.className = "text-danger";
             <form action="/prof/quiz_store.php" method="post" enctype="multipart/form-data" id="formQuiz">
                 <div class="row g-3">
                     <input type="hidden" name="quiz_id" id="quiz_id" value="">
+
                     <!-- CLASSE -->
                     <div class="col-md-4">
                         <label class="form-label">Classe</label>
@@ -146,7 +147,6 @@ autosaveStatus.className = "text-danger";
                         <div class="form-text">
                             Maintenez Ctrl (Windows) ou Cmd (Mac) pour sélectionner plusieurs classes.
                         </div>
-
                     </div>
 
                     <!-- COURS -->
@@ -167,7 +167,7 @@ autosaveStatus.className = "text-danger";
                     </div>
 
                     <!-- TYPE D'EVALUATION -->
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label">Type d’évaluation</label>
                         <select name="type_quiz" class="form-select" required>
                             <option value="Exercice">Exercice</option>
@@ -178,20 +178,28 @@ autosaveStatus.className = "text-danger";
                     </div>
 
                     <!-- FORMAT -->
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <label class="form-label">Format</label>
                         <select name="format" id="format" class="form-select" required>
                             <option value="QCM">QCM</option>
-                            <option value="RQ">Réponse Libre (RQ)</option>
+                            <option value="RQ">RQ</option>
                             <option value="PJ">Pièce jointe (PJ)</option>
                         </select>
                     </div>
 
+                    <!-- DATE DE CREATION DU QUIZ (created_at) -->
+                    <div class="col-md-3">
+                        <label class="form-label">Programmer la date</label>
+                        <input type="datetime-local" name="created_at" id="created_at" class="form-control"
+                            value="<?= date('Y-m-d\TH:i') ?>" required>
+                        <!-- <div class="form-text">Date d'enregistrement du quiz (champ `created_at`).</div> -->
+                    </div>
+
                     <!-- DATE LIMITE -->
-                    <div class="col-md-4">
-                        <label class="form-label">Date limite</label>
+                    <div class="col-md-3">
+                        <label class="form-label text-danger">Date limite</label>
                         <input type="date" name="date_limite" class="form-control">
-                        <div class="form-text">Programmez un devoir en fixant une date limite.</div>
+                        <!-- <div class="form-text">Programmez un devoir en fixant une date limite.</div> -->
                     </div>
 
                     <!-- DESCRIPTION -->
@@ -215,7 +223,7 @@ autosaveStatus.className = "text-danger";
                         </div>
                     </div>
 
-                    <!-- Zone PJ (toujours visible maintenant) -->
+                    <!-- Zone PJ -->
                     <div class="col-12" id="zone-pj">
                         <label class="form-label">Pièces jointes (optionnel)</label>
                         <input type="file" name="attachments[]" id="attachments" class="form-control" multiple
@@ -289,7 +297,6 @@ function rqBlock(i, expected = '', keywords = '', similarity = 100) {
     `;
 }
 
-
 function qcmBlock(i) {
     return `
     <div class="mt-2" id="choices-${i}"></div>
@@ -335,7 +342,7 @@ window.toggleType = function(i, val) {
     if (!holder) return;
 
     if (val === 'RQ') {
-        holder.innerHTML = rqBlock(i); // version enrichie avec mots-clés et seuil
+        holder.innerHTML = rqBlock(i);
     } else {
         holder.innerHTML = qcmBlock(i);
         addChoice(i, 'Choix 1', true);
@@ -375,10 +382,11 @@ window.addQuestion = function(forceType = null) {
       </div>
       <div class="col-md-4">
         <label class="form-label">Type</label>
-        <select class="form-select" name="q[${idx}][type]" onchange="toggleType(${idx}, this.value)">
+        <select class="form-select q-type-select" disabled>
           <option value="QCM" ${fmt==='QCM'?'selected':''}>QCM</option>
           <option value="RQ"  ${fmt==='RQ'?'selected':''}>RQ</option>
         </select>
+        <input type="hidden" name="q[${idx}][type]" class="q-type-hidden" value="${fmt}">
       </div>
     </div>
     <div class="mt-3" data-choices id="qblock-${idx}">
@@ -394,6 +402,29 @@ window.addQuestion = function(forceType = null) {
     }
 };
 
+// ===================== Synchronisation Format -> Type de chaque question =====================
+function syncQuestionsTypeWithFormat() {
+    const currentFormat = formatSel.value === 'RQ' ? 'RQ' : 'QCM';
+
+    // Met à jour toutes les questions existantes
+    const selectElements = questionsEl.querySelectorAll('.q-type-select');
+    const hiddenElements = questionsEl.querySelectorAll('.q-type-hidden');
+
+    selectElements.forEach((sel, i) => {
+        sel.value = currentFormat;
+        if (hiddenElements[i]) {
+            hiddenElements[i].value = currentFormat;
+        }
+
+        // Extrait l'index de la question pour mettre à jour son contenu (QCM ou RQ)
+        const qblock = sel.closest('.border').querySelector('[id^="qblock-"]');
+        if (qblock) {
+            const qidx = qblock.id.replace('qblock-', '');
+            toggleType(qidx, currentFormat);
+        }
+    });
+}
+
 // ===================== Période active selon la classe =====================
 function updatePeriode() {
     const selected = Array.from(classeSel.selectedOptions).map(o => parseInt(o.value));
@@ -404,7 +435,6 @@ function updatePeriode() {
         return;
     }
 
-    // On prend la période de la première classe sélectionnée
     const first = selected[0];
     const p = PERIODE_BY_CLASSE[first];
 
@@ -451,6 +481,8 @@ function updateZones(reset = false) {
         if (reset) {
             clearQuestions();
             addQuestion(fmt);
+        } else {
+            syncQuestionsTypeWithFormat();
         }
     }
 }
@@ -461,7 +493,6 @@ if (classeSel) {
         populateCours();
         updatePeriode();
     });
-    // init selon classe déjà sélectionnée
     populateCours();
     updatePeriode();
 }
@@ -484,49 +515,35 @@ if (btnAdd) {
 /* ============================
    PREVIEW DES FICHIERS
 ============================ */
-
 const attachmentInput = document.getElementById('attachments');
 const previewContainer = document.getElementById('filePreview');
 
 attachmentInput?.addEventListener('change', function() {
-
     previewContainer.innerHTML = '';
 
     Array.from(this.files).forEach(file => {
-
         const fileType = file.type;
         const reader = new FileReader();
         const wrapper = document.createElement('div');
         wrapper.className = "mb-3 border rounded p-2";
 
         if (fileType.startsWith('image/')) {
-
             reader.onload = function(e) {
                 wrapper.innerHTML = `
                     <strong>${file.name}</strong><br>
-                    <img src="${e.target.result}"
-                         class="img-fluid mt-2"
-                         style="max-height:200px;">
+                    <img src="${e.target.result}" class="img-fluid mt-2" style="max-height:200px;">
                 `;
             };
             reader.readAsDataURL(file);
-
         } else if (fileType === 'application/pdf') {
-
             reader.onload = function(e) {
                 wrapper.innerHTML = `
                     <strong>${file.name}</strong>
-                    <embed src="${e.target.result}"
-                           type="application/pdf"
-                           width="100%"
-                           height="300px"
-                           class="mt-2"/>
+                    <embed src="${e.target.result}" type="application/pdf" width="100%" height="300px" class="mt-2"/>
                 `;
             };
             reader.readAsDataURL(file);
-
         } else if (fileType.startsWith('video/')) {
-
             reader.onload = function(e) {
                 wrapper.innerHTML = `
                     <strong>${file.name}</strong><br>
@@ -536,9 +553,7 @@ attachmentInput?.addEventListener('change', function() {
                 `;
             };
             reader.readAsDataURL(file);
-
         } else if (fileType.startsWith('audio/')) {
-
             reader.onload = function(e) {
                 wrapper.innerHTML = `
                     <strong>${file.name}</strong><br>
@@ -548,9 +563,7 @@ attachmentInput?.addEventListener('change', function() {
                 `;
             };
             reader.readAsDataURL(file);
-
         } else {
-
             wrapper.innerHTML = `
                 📎 <strong>${file.name}</strong>
                 <div class="text-muted small">
@@ -559,7 +572,6 @@ attachmentInput?.addEventListener('change', function() {
                 </div>
             `;
         }
-
         previewContainer.appendChild(wrapper);
     });
 });
@@ -567,66 +579,57 @@ attachmentInput?.addEventListener('change', function() {
 let quizId = document.getElementById('quiz_id');
 let saving = false;
 
-function collectQuestions() {
-    return window.qIndex !== undefined ? document.getElementById('formQuiz') : null;
-}
-
 function validateForm() {
-
     const form = document.getElementById('formQuiz');
 
-    // ✅ classes obligatoires (multiple)
     const classes = document.getElementById('classe_ids');
     if (!classes || classes.selectedOptions.length === 0) {
         alert("❌ Sélectionnez au moins une classe");
         return false;
     }
 
-    // ✅ cours obligatoire
     const cours = form.querySelector('[name="cours_id"]');
     if (!cours || !cours.value) {
         alert("❌ Sélectionnez un cours");
         return false;
     }
 
-    // ✅ période
     const periode = document.getElementById('periode_id');
     if (!periode.value) {
         alert("❌ Période invalide");
         return false;
     }
 
-    // ✅ type évaluation
     const type = form.querySelector('[name="type_quiz"]');
-    if (!type.value) {
+    if (!type || !type.value) {
         alert("❌ Type d’évaluation requis");
         return false;
     }
 
-    // ✅ format
     const format = form.querySelector('[name="format"]');
     if (!format.value) {
         alert("❌ Format requis");
         return false;
     }
 
-    // ✅ description
+    const createdAt = form.querySelector('[name="created_at"]');
+    if (!createdAt || !createdAt.value) {
+        alert("❌ Date du quiz obligatoire");
+        return false;
+    }
+
     const desc = form.querySelector('[name="description"]');
     if (!desc.value.trim()) {
         alert("❌ Description obligatoire");
         return false;
     }
 
-    // ✅ questions sauf PJ
     if (format.value !== 'PJ') {
-
         const questions = document.querySelectorAll('[name^="q["][name$="[text]"]');
-
         if (questions.length === 0) {
             alert("❌ Ajoutez au moins une question");
             return false;
         }
-
         for (let q of questions) {
             if (!q.value.trim()) {
                 alert("❌ Une question est vide");
@@ -639,12 +642,8 @@ function validateForm() {
 }
 
 document.getElementById('btnDraft')?.addEventListener('click', async function() {
-
     if (!validateForm()) return;
 
-    const form = document.getElementById('formQuiz');
-
-    // 🔥 dernière sauvegarde auto
     saving = false;
     await autoSaveAll();
 
@@ -655,58 +654,19 @@ document.getElementById('btnDraft')?.addEventListener('click', async function() 
         return;
     }
 
-    // ✅ redirection directe
     window.location.href = "/prof/quiz_view.php?id=" + quizId;
-
 });
 
-// async function autoSaveAll() {
-
-//     if (saving) return;
-//     saving = true;
-
-//     const form = document.getElementById('formQuiz');
-//     const formData = new FormData(form);
-
-//     // 1️⃣ quiz
-//     const r1 = await fetch('/prof/quiz_autosave.php', {
-//         method: 'POST',
-//         body: formData
-//     });
-//     const d1 = await r1.json();
-
-//     if (d1.quiz_id) {
-//         quizId.value = d1.quiz_id;
-//         formData.set('quiz_id', d1.quiz_id);
-//     }
-
-//     // 2️⃣ questions
-//     await fetch('/prof/quiz_questions_autosave.php', {
-//         method: 'POST',
-//         body: formData
-//     });
-
-//     saving = false;
-// }
-
-// 🔥 timer global
-// setInterval(autoSaveAll, 3000);
-
-// 🚫 Désactiver soumission manuelle (sécurité)
 document.getElementById('formQuiz')?.addEventListener('submit', function(e) {
     e.preventDefault();
 });
 
 document.getElementById('btnPublish')?.addEventListener('click', async function() {
-
     if (!validateForm()) return;
 
     const form = document.getElementById('formQuiz');
-
-    // 🔥 permettre autosave de fonctionner
     saving = false;
 
-    // 🔥 dernière sauvegarde
     await autoSaveAll();
 
     const formData = new FormData(form);
@@ -719,13 +679,10 @@ document.getElementById('btnPublish')?.addEventListener('click', async function(
     formData.set('statut', 'en attente');
 
     try {
-
         this.disabled = true;
         this.innerHTML = "⏳ Publication...";
 
-        // ✅ 1. upload fichiers
         if (document.getElementById('attachments').files.length > 0) {
-
             const uploadRes = await fetch('/prof/quiz_upload_autosave.php', {
                 method: 'POST',
                 body: formData
@@ -740,21 +697,19 @@ document.getElementById('btnPublish')?.addEventListener('click', async function(
             }
         }
 
-        // ✅ 2. publier quiz
         const res = await fetch('/prof/quiz_store.php', {
             method: 'POST',
             body: formData
         });
 
         const text = await res.text();
-        console.log("SERVER:", text);
-
         let data;
 
         try {
             data = JSON.parse(text);
         } catch (e) {
             alert("❌ Erreur serveur (réponse invalide)");
+            this.disabled = false;
             return;
         }
 
@@ -773,12 +728,10 @@ document.getElementById('btnPublish')?.addEventListener('click', async function(
 });
 
 async function autoSaveAll() {
-
-    if (saving) return; // 🔥 empêche conflit
+    if (saving) return;
     saving = true;
 
     try {
-
         const form = document.getElementById('formQuiz');
         const formData = new FormData(form);
 
@@ -798,13 +751,6 @@ async function autoSaveAll() {
             method: 'POST',
             body: formData
         });
-
-        // if (document.getElementById('attachments').files.length > 0) {
-        //     await fetch('/prof/quiz_upload_autosave.php', {
-        //         method: 'POST',
-        //         body: formData
-        //     });
-        // }
 
     } catch (e) {
         console.error("Autosave error:", e);
