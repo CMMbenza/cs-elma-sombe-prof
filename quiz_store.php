@@ -6,6 +6,7 @@ header('Content-Type: application/json');
 
 require_once __DIR__.'/includes/auth.php';
 require_once __DIR__.'/includes/helpers.php';
+require_once __DIR__.'/includes/notificationsemail.php'; // Inclusion du fichier de notification mail
 require_prof();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -25,7 +26,7 @@ if ($quizId <= 0) {
 /* ===========================
    Vérifier propriétaire
 =========================== */
-$stmt = $con->prepare("SELECT id, statut FROM quiz WHERE id=? AND agent_id=?");
+$stmt = $con->prepare("SELECT id, titre, statut FROM quiz WHERE id=? AND agent_id=?");
 $stmt->bind_param('ii', $quizId, $agentId);
 $stmt->execute();
 $quiz = $stmt->get_result()->fetch_assoc();
@@ -95,6 +96,13 @@ if ($newStatus === 'en attente') {
         $stmt->bind_param('ii', $quizId, $agentId);
         $stmt->execute();
         $stmt->close();
+
+        // --- ENVOI DE L'EMAIL AUX GESTIONNAIRES ---
+        $titreQuiz = $quiz['titre'] ?? 'Sans titre';
+        $sujetMail   = "Nouveau Quiz / Devoir soumis pour validation";
+        $contenuMail = "L'enseignant a publié le quiz/devoir « " . $titreQuiz . " » (ID: " . $quizId . "). Il est actuellement 'en attente' de validation.";
+        
+        sendMailToManagers($con, $agentId, $sujetMail, $contenuMail);
 
         echo json_encode([
             'success' => true,

@@ -299,3 +299,6 @@ CREATE TABLE IF NOT EXISTS `resume_cours` (
   FOREIGN KEY (`journal_id`) REFERENCES `journal_classe`(`id`) ON DELETE CASCADE
 );
 ALTER TABLE `resume_cours` ADD COLUMN `piece_jointe` VARCHAR(255) DEFAULT NULL AFTER `devoir`;
+
+23.09.2026 :
+ALTER TABLE `users` ADD COLUMN `email` VARCHAR(150) NULL AFTER `password`;

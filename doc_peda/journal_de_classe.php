@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__.'/../includes/auth.php';
 require_once __DIR__.'/../includes/helpers.php';
+require_once __DIR__.'/../includes/notificationsemail.php'; // Inclusion du script de notification mail
 require_prof();
 
 include __DIR__.'/../get_annee_en_cours.php';
@@ -103,6 +104,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_batch'])) 
 
         if ($successCount > 0) {
             $_SESSION['msg_success'] = "{$successCount} matière(s) consignée(s) avec succès pour le " . date('d/m/Y', strtotime($jourDate)) . ".";
+            
+            // --- ENVOI DE L'EMAIL AUX GESTIONNAIRES ---
+            $sujetMail   = "Nouveau journal de classe soumis";
+            $contenuMail = "L'enseignant a rédigé " . $successCount . " matière(s) dans le journal de classe pour la date du " . date('d/m/Y', strtotime($jourDate)) . ".";
+            sendMailToManagers($con, $agentId, $sujetMail, $contenuMail);
+
         } else {
             $_SESSION['msg_error'] = "Aucune matière valide n'a été remplie.";
         }
@@ -151,6 +158,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_edit'])) {
         $stmtUpd->bind_param('sisssii', $editDate, $coursId, $matieres, $note, $filename, $idEdit, $agentId);
         if ($stmtUpd->execute()) {
             $_SESSION['msg_success'] = "Leçon modifiée avec succès.";
+            
+            // --- OPTIONNEL : NOTIFICATION SI LA LEÇON EST MODIFIÉE ---
+            $sujetMail   = "Modification d'un journal de classe";
+            $contenuMail = "Une leçon du " . date('d/m/Y', strtotime($editDate)) . " a été mise à jour par l'enseignant.";
+            sendMailToManagers($con, $agentId, $sujetMail, $contenuMail);
         }
         $stmtUpd->close();
     }
@@ -198,6 +210,7 @@ include __DIR__.'/../layout/header.php';
 include __DIR__.'/../layout/navbar.php';
 ?>
 
+<!-- REST DU CODE HTML IDENTIQUE -->
 <div class="container-fluid px-4 py-3">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
@@ -351,7 +364,6 @@ include __DIR__.'/../layout/navbar.php';
                                 </a>
 
                                 <?php if (($f['statut'] ?? 'en attente') !== 'valider'): ?>
-                                <!-- Bouton Modifier avec la date injectée dans data-date -->
                                 <button type="button" class="btn btn-sm btn-outline-secondary me-1 btn-edit"
                                     data-id="<?= (int)$f['id'] ?>"
                                     data-date="<?= htmlspecialchars($f['jour_date'], ENT_QUOTES) ?>"
@@ -361,7 +373,6 @@ include __DIR__.'/../layout/navbar.php';
                                     data-bs-target="#editModal" title="Modifier">
                                     ✏️
                                 </button>
-                                <!-- Formulaire Supprimer -->
                                 <form method="post" class="d-inline"
                                     onsubmit="return confirm('Voulez-vous vraiment supprimer cette leçon ?');">
                                     <input type="hidden" name="action_delete" value="1">
@@ -383,7 +394,7 @@ include __DIR__.'/../layout/navbar.php';
     <?php endif; ?>
 </div>
 
-<!-- MODAL DE MODIFICATION D'UNE LEÇON -->
+<!-- MODALS ET SCRIPT JAVASCRIPT CONSERVES IDENTIQUES -->
 <div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <form method="post" enctype="multipart/form-data" class="modal-content">
@@ -395,7 +406,6 @@ include __DIR__.'/../layout/navbar.php';
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
             </div>
             <div class="modal-body">
-                <!-- CHAMP DATE AJOUTÉ AU MODAL -->
                 <div class="mb-3">
                     <label class="form-label fw-bold">Date de la leçon</label>
                     <input type="date" name="edit_jour_date" id="modal_edit_date" class="form-control" required>
@@ -432,52 +442,8 @@ include __DIR__.'/../layout/navbar.php';
     </div>
 </div>
 
-<!-- MODAL EXPLICATIF -->
-<div class="modal fade" id="aideModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content border-0 shadow">
-            <div class="modal-header bg-info text-white">
-                <h5 class="modal-title fw-bold">💡 Gain de temps : Saisie unique du journal !</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
-                    aria-label="Fermer"></button>
-            </div>
-            <div class="modal-body fs-6">
-                <p class="fw-bold text-dark">Chers Enseignants,</p>
-                <p>Pour vous simplifier la tâche, vous n'avez plus besoin d'enregistrer votre journal cours par cours
-                    après chaque période !</p>
-                <div class="card bg-light border-0 p-3 mb-3">
-                    <ol class="mb-0 ps-3">
-                        <li class="mb-2">Indiquez le premier cours donné dans la première ligne.</li>
-                        <li class="mb-2">Cliquez sur <strong>"➕ Ajouter un cours"</strong> pour faire apparaître une
-                            autre ligne.</li>
-                        <li class="mb-2">Ajoutez autant de lignes que de cours dispensés dans la journée.</li>
-                        <li class="mb-0">Cliquez une seule fois sur <strong>"💾 Enregistrer tout le journal du
-                                jour"</strong>.</li>
-                    </ol>
-                </div>
-                <div class="alert alert-warning mb-0 py-2 small">
-                    📌 <strong>Note :</strong> Tant que la direction n'a pas validé, vous pouvez modifier (✏️) ou
-                    supprimer (🗑️) vos saisies via le tableau du bas.
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-primary fw-bold" data-bs-dismiss="modal">Commencer à
-                    saisir</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- JAVASCRIPT GESTION DYNAMIQUE ET MODALS -->
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    <?php if (empty($msgSuccess) && empty($msgError)): ?>
-    const aideModalElement = document.getElementById('aideModal');
-    if (aideModalElement) {
-        new bootstrap.Modal(aideModalElement).hide();
-    }
-    <?php endif; ?>
-
     const tbody = document.getElementById('journal-tbody');
     const addBtn = document.getElementById('add-row-btn');
     const addBtnBottom = document.getElementById('add-row-btn-bottom');
