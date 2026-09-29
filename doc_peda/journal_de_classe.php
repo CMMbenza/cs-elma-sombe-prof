@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 require_once __DIR__.'/../includes/auth.php';
 require_once __DIR__.'/../includes/helpers.php';
-require_once __DIR__.'/../includes/notificationsemail.php'; // Inclusion du script de notification mail
 require_prof();
 
 include __DIR__.'/../get_annee_en_cours.php';
@@ -15,15 +14,8 @@ $classeId = (int)get_current_classe();
 
 $uploadDir = __DIR__.'/../../uploads/attachement_journal_de_class/';
 
-if (!$classeId) {
-    include __DIR__.'/../layout/header.php';
-    include __DIR__.'/../layout/navbar.php';
-    echo '<div class="container mt-3"><div class="alert alert-info">
-            Aucune classe sélectionnée. <a href="/prof/switch_classe.php">Choisir une classe</a>
-          </div></div>';
-    include __DIR__.'/../layout/footer.php';
-    exit;
-}
+// Récupération de la liste de toutes les classes affectées à l'enseignant
+$mesClasses = classes_of_agent($con, $agentId);
 
 // -------------------------------------------------------------------------
 // 1) TRAITEMENT : SUPPRESSION D'UNE LIGNE
@@ -58,16 +50,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_delete'])) {
 }
 
 // -------------------------------------------------------------------------
-// 2) TRAITEMENT : ENREGISTREMENT GROUPÉ (SAISIE MULTIPLE DU JOUR)
+// 2) TRAITEMENT : ENREGISTREMENT GROUPÉ MULTI-CLASSES (SAISIE MULTIPLE DU JOUR)
 // -------------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_batch'])) {
-    $jourDate = trim((string)($_POST['jour_date'] ?? ''));
-    $coursIds = $_POST['cours_id'] ?? [];
-    $matieres = $_POST['matieres'] ?? [];
-    $notes    = $_POST['note'] ?? [];
+    $jourDate      = trim((string)($_POST['jour_date'] ?? ''));
+    $targetClasses = $_POST['target_classes'] ?? [];
+    $coursIds      = $_POST['cours_id'] ?? [];
+    $matieres      = $_POST['matieres'] ?? [];
+    $notes         = $_POST['note'] ?? [];
     
+    // Filtrage de sécurité : ne garder que les classes effectivement affectées au professeur
+    $allowedClasseIds = array_column($mesClasses, 'id');
+    $targetClasses    = array_map('intval', (array)$targetClasses);
+    $validClasses     = array_intersect($targetClasses, $allowedClasseIds);
+
     if (empty($jourDate) || empty($coursIds)) {
         $_SESSION['msg_error'] = "Veuillez spécifier la date et au moins une leçon.";
+    } elseif (empty($validClasses)) {
+        $_SESSION['msg_error'] = "Veuillez sélectionner au moins une classe valide parmi vos classes affectées.";
     } else {
         $successCount = 0;
 
@@ -90,25 +90,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_add_batch'])) 
                     move_uploaded_file($tmpName, $uploadDir . $filename);
                 }
 
-                $stmt = $con->prepare("
-                    INSERT INTO journal_classe (jour_date, prof_id, classe_id, cours_id, anneScolaire, matieres, note, piece_jointe, statut)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'en attente')
-                ");
-                $stmt->bind_param('siisssss', $jourDate, $agentId, $classeId, $coursId, $anneeEnCours, $matiereTxt, $noteTxt, $filename);
-                if ($stmt->execute()) {
-                    $successCount++;
+                // Insertion de la leçon pour CHAQUE classe sélectionnée
+                foreach ($validClasses as $cDestId) {
+                    $stmt = $con->prepare("
+                        INSERT INTO journal_classe (jour_date, prof_id, classe_id, cours_id, anneScolaire, matieres, note, piece_jointe, statut)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'en attente')
+                    ");
+                    $stmt->bind_param('siisssss', $jourDate, $agentId, $cDestId, $coursId, $anneeEnCours, $matiereTxt, $noteTxt, $filename);
+                    if ($stmt->execute()) {
+                        $successCount++;
+                    }
+                    $stmt->close();
                 }
-                $stmt->close();
             }
         }
 
         if ($successCount > 0) {
-            $_SESSION['msg_success'] = "{$successCount} matière(s) consignée(s) avec succès pour le " . date('d/m/Y', strtotime($jourDate)) . ".";
+            $_SESSION['msg_success'] = "{$successCount} entrée(s) consignée(s) avec succès pour le " . date('d/m/Y', strtotime($jourDate)) . " dans " . count($validClasses) . " classe(s).";
             
             // --- ENVOI DE L'EMAIL AUX GESTIONNAIRES ---
             $sujetMail   = "Nouveau journal de classe soumis";
             $contenuMail = "L'enseignant a rédigé " . $successCount . " matière(s) dans le journal de classe pour la date du " . date('d/m/Y', strtotime($jourDate)) . ".";
-            sendMailToManagers($con, $agentId, $sujetMail, $contenuMail);
+            // sendMailToManagers($con, $agentId, $sujetMail, $contenuMail);
 
         } else {
             $_SESSION['msg_error'] = "Aucune matière valide n'a été remplie.";
@@ -159,10 +162,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_edit'])) {
         if ($stmtUpd->execute()) {
             $_SESSION['msg_success'] = "Leçon modifiée avec succès.";
             
-            // --- OPTIONNEL : NOTIFICATION SI LA LEÇON EST MODIFIÉE ---
             $sujetMail   = "Modification d'un journal de classe";
             $contenuMail = "Une leçon du " . date('d/m/Y', strtotime($editDate)) . " a été mise à jour par l'enseignant.";
-            sendMailToManagers($con, $agentId, $sujetMail, $contenuMail);
+            // sendMailToManagers($con, $agentId, $sujetMail, $contenuMail);
         }
         $stmtUpd->close();
     }
@@ -177,31 +179,47 @@ $msgError   = $_SESSION['msg_error'] ?? '';
 unset($_SESSION['msg_success'], $_SESSION['msg_error']);
 
 // -------------------------------------------------------------------------
-// 4) CHARGEMENT DES DONNÉES
+// 4) CHARGEMENT DES DONNÉES SANS DOUBLONS DE COURS
 // -------------------------------------------------------------------------
+
+// Dédoublonnage des intitulés de cours avec GROUP BY
 $coursList = [];
 $stmt = $con->prepare("
-    SELECT DISTINCT co.id, co.intitule
+    SELECT MIN(co.id) AS id, co.intitule
     FROM affectation_prof_classe apc
     INNER JOIN cours co ON co.id = apc.cours_id
-    WHERE apc.agent_id = ? AND apc.classe_id = ?
-    ORDER BY co.intitule
+    WHERE apc.agent_id = ?
+    GROUP BY co.intitule
+    ORDER BY co.intitule ASC
 ");
-$stmt->bind_param('ii', $agentId, $classeId);
+$stmt->bind_param('i', $agentId);
 $stmt->execute();
 $coursList = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-// Chargement des leçons du jour
+// Chargement des leçons enregistrées aujourd'hui
 $today = date('Y-m-d');
-$stmt = $con->prepare("
-    SELECT jc.*, co.intitule AS cours_nom
-    FROM journal_classe jc
-    INNER JOIN cours co ON co.id = jc.cours_id
-    WHERE jc.prof_id = ? AND jc.classe_id = ? AND jc.jour_date = ?
-    ORDER BY jc.id ASC
-");
-$stmt->bind_param('iis', $agentId, $classeId, $today);
+if ($classeId > 0) {
+    $stmt = $con->prepare("
+        SELECT jc.*, co.intitule AS cours_nom, c.description AS classe_nom
+        FROM journal_classe jc
+        INNER JOIN cours co ON co.id = jc.cours_id
+        INNER JOIN classe c ON c.id = jc.classe_id
+        WHERE jc.prof_id = ? AND jc.classe_id = ? AND jc.jour_date = ?
+        ORDER BY jc.id ASC
+    ");
+    $stmt->bind_param('iis', $agentId, $classeId, $today);
+} else {
+    $stmt = $con->prepare("
+        SELECT jc.*, co.intitule AS cours_nom, c.description AS classe_nom
+        FROM journal_classe jc
+        INNER JOIN cours co ON co.id = jc.cours_id
+        INNER JOIN classe c ON c.id = jc.classe_id
+        WHERE jc.prof_id = ? AND jc.jour_date = ?
+        ORDER BY jc.id ASC
+    ");
+    $stmt->bind_param('is', $agentId, $today);
+}
 $stmt->execute();
 $fichesDuJour = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
@@ -210,7 +228,6 @@ include __DIR__.'/../layout/header.php';
 include __DIR__.'/../layout/navbar.php';
 ?>
 
-<!-- REST DU CODE HTML IDENTIQUE -->
 <div class="container-fluid px-4 py-3">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div>
@@ -242,7 +259,7 @@ include __DIR__.'/../layout/navbar.php';
     </div>
     <?php endif; ?>
 
-    <!-- FORMULAIRE DE SAISIE GROUPÉE -->
+    <!-- FORMULAIRE DE SAISIE GROUPÉE MULTI-CLASSES -->
     <div class="card shadow-sm border-0 mb-4">
         <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center py-3">
             <span class="fw-bold">✏️ Journal du jour (<?= date('d/m/Y') ?>)</span>
@@ -256,8 +273,35 @@ include __DIR__.'/../layout/navbar.php';
 
                 <div class="row mb-3">
                     <div class="col-md-3">
-                        <label class="form-label fw-bold">Date du journal</label>
+                        <label class="form-label fw-bold">Date du journal <span class="text-danger">*</span></label>
                         <input type="date" name="jour_date" class="form-control" value="<?= date('Y-m-d') ?>" required>
+                    </div>
+
+                    <!-- SÉLECTION MULTIPLE DES CLASSES AFFECTÉES -->
+                    <div class="col-md-9">
+                        <label class="form-label fw-bold">
+                            Envoyer aux classe(s) <span class="text-danger">*</span>
+                            <small class="text-muted fw-normal">(Seules vos classes affectées sont listées)</small>
+                        </label>
+                        <div class="d-flex flex-wrap gap-2 p-2 border rounded bg-light">
+                            <?php if (!empty($mesClasses)): ?>
+                                <?php foreach ($mesClasses as $cls): ?>
+                                    <div class="form-check form-check-inline m-0 me-3">
+                                        <input class="form-check-input" type="checkbox" name="target_classes[]" 
+                                               value="<?= (int)$cls['id'] ?>" id="class_chk_<?= (int)$cls['id'] ?>"
+                                               <?= ((int)$cls['id'] === $classeId) ? 'checked' : '' ?>>
+                                        <label class="form-check-label fw-bold text-dark" for="class_chk_<?= (int)$cls['id'] ?>">
+                                            <?= e($cls['description']) ?> 
+                                            <?php if (!empty($cls['cycle_desc'])): ?>
+                                                <small class="text-muted">(<?= e($cls['cycle_desc']) ?>)</small>
+                                            <?php endif; ?>
+                                        </label>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <span class="text-danger small">Aucune classe affectée à votre compte.</span>
+                            <?php endif; ?>
+                        </div>
                     </div>
                 </div>
 
@@ -266,8 +310,7 @@ include __DIR__.'/../layout/navbar.php';
                         <thead class="table-light">
                             <tr>
                                 <th style="width: 25%;">Cours / Branche <span class="text-danger">*</span></th>
-                                <th style="width: 35%;">Matière dispensée / Sujet vu <span class="text-danger">*</span>
-                                </th>
+                                <th style="width: 35%;">Matière dispensée / Sujet vu <span class="text-danger">*</span></th>
                                 <th style="width: 20%;">Remarques / Devoirs</th>
                                 <th style="width: 10%;">Support / PJ</th>
                                 <th style="width: 10%;" class="text-center">Action</th>
@@ -328,6 +371,7 @@ include __DIR__.'/../layout/navbar.php';
                 <table class="table table-hover align-middle mb-0">
                     <thead class="table-light">
                         <tr>
+                            <!-- <th>Classe</th> -->
                             <th>Cours</th>
                             <th>Matière dispensée</th>
                             <th>Remarques</th>
@@ -339,6 +383,7 @@ include __DIR__.'/../layout/navbar.php';
                     <tbody>
                         <?php foreach ($fichesDuJour as $f): ?>
                         <tr>
+                            <!-- <td><span class="badge bg-secondary"><?= e($f['classe_nom']) ?></span></td> -->
                             <td class="fw-bold text-primary"><?= e($f['cours_nom']) ?></td>
                             <td><?= nl2br(e($f['matieres'])) ?></td>
                             <td><?= e($f['note'] ?: '—') ?></td>
@@ -394,7 +439,6 @@ include __DIR__.'/../layout/navbar.php';
     <?php endif; ?>
 </div>
 
-<!-- MODALS ET SCRIPT JAVASCRIPT CONSERVES IDENTIQUES -->
 <div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
         <form method="post" enctype="multipart/form-data" class="modal-content">

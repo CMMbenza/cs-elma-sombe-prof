@@ -182,7 +182,7 @@ autosaveStatus.className = "text-danger";
                         <label class="form-label">Format</label>
                         <select name="format" id="format" class="form-select" required>
                             <option value="QCM">QCM</option>
-                            <option value="RQ">RQ</option>
+                            <!-- <option value="RQ">RQ</option> -->
                             <option value="PJ">Pièce jointe (PJ)</option>
                         </select>
                     </div>
